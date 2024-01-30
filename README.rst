@@ -10,6 +10,7 @@ It supports
  - and cleaning up old backups.
  - prepare export for RocksDB
  - export as csv or `Exported Data Files` (MySQL OUTFILE Export Files)
+ - enable the lock feature with the --lock flag: backup.py --database=mydatabase --lock
 
 Installation
 ------------
@@ -134,11 +135,12 @@ if `port` not specified 3306 default will be used
 
 Command line arguments
 ----------------------
- -d, --database: Specify a particular database to backup. If omitted, all databases are backed up.
- -c, --config: Path to configuration file. Defaults to '.my.cnf' in user home directory.
- --rocksdb: Convert <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
- --csv: Export table data in CSV format.
- --debug: Enable debug mode for detailed logging.
+ -d, --database : Specify a particular database to backup. If omitted, all databases are backed up.
+ -c, --config : Path to configuration file. Defaults to '.my.cnf' in user home directory.
+ --rocksdb : Convert <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
+ --csv : Export table data in CSV format.
+ --lock :  Lock tables of database during back-upping.
+ --debug : Enable debug mode for detailed logging.
 
 Usage
 
@@ -170,3 +172,34 @@ You can run periodically script with help of crond:
 
     00 1  *  *  * root /usr/bin/flock -w 1 /var/lock/db-backup.lock -c 'echo `date`; time /usr/local/bin/backup' &>>/var/log/db-backup.log
     00 1  *  *  * root /usr/bin/flock -w 1 /var/lock/db-backup.lock -c 'echo `date`; time /usr/local/bin/backup test' &>>/var/log/db-backup.log
+
+
+Warning: Blocking Backup Operations
+-------------------
+The lock option in the MySQL Backup Script ensures data consistency during the backup of a database. It locks each table for reading before backup and releases it immediately after, thus preventing any modifications during the backup process.
+
+Data Consistency: Locks tables to prevent changes during the backup, ensuring a consistent data snapshot.
+
+Selective Locking: Locks are applied only to the tables of the specified database, reducing the overall impact on the database server.
+
+In summary, the lock option is a balance between maintaining data integrity and minimizing operational impact during backups. It's recommended to use it during low-activity periods for the best efficiency.
+
+Please be aware that during the backup process of a database, write operations to tables within that database will be temporarily suspended. This suspension is necessary to ensure data consistency and integrity of the backup.
+
+It's crucial to plan the backup during periods of low activity or outside of peak hours to minimize the impact on regular database operations.
+
+Warning: Non-Blocking Backup Operations
+-------------------
+Please be aware that the backup script performs non-blocking operations. This means that the backup is executed without pausing or locking the entire database. While this approach ensures continuous access to the database during the backup process, it also has important implications, especially in environments with high transaction volumes or frequent data modifications.
+
+Data Inconsistency Risks: As the script backs up each table individually, other tables may be updated or changed during this process. This can lead to potential data inconsistencies in the backup. For instance, if Table A is backed up at time T1 and Table B is backed up later at time T2, any interrelated changes made to these tables between T1 and T2 will not be consistently reflected in the backup.
+
+Considerations for High-Volume Environments: In databases with high transaction volumes or frequent updates, consider the potential impact of these non-blocking backups. The backup script is well-suited for environments where data consistency requirements are not extremely strict, or where database changes are relatively infrequent.
+
+Alternative Strategies for Critical Data: For databases where data consistency is crucial (e.g., financial systems), you might need to explore alternative backup strategies. These might include database snapshots, point-in-time backups, or brief periods of read-only access to ensure data consistency.
+
+Regular Monitoring and Verification: Regularly monitor your backup processes and periodically verify the integrity and consistency of the backed-up data. This practice is essential to ensure that your backups meet your recovery objectives and data integrity requirements.
+
+By understanding these aspects of the backup script's operation, you can better align its use with your organization's data integrity policies and recovery objectives.
+
+
