@@ -132,15 +132,18 @@ if specified `socket` and `host` the `socket` will be used, else host will be us
 if `port` not specified 3306 default will be used
 
 
-
 Command line arguments
 ----------------------
- -d, --database : Specify a particular database to backup. If omitted, all databases are backed up.
- -c, --config : Path to configuration file. Defaults to '.my.cnf' in user home directory.
- --rocksdb : Convert <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
- --csv : Export table data in CSV format.
- --lock :  Lock tables of database during back-upping.
- --debug : Enable debug mode for detailed logging.
+
+The script supports the following command line arguments:
+
+- ``-d, --database``: Specify a particular database to backup. If omitted, all databases are backed up.
+- ``-c, --config``: Path to the configuration file. Defaults to ``.my.cnf`` in the user's home directory.
+- ``--rocksdb``: Convert the <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
+- ``--csv``: Export table data in CSV format.
+- ``--lock``: Lock tables of the database during backup.
+- ``--debug``: Enable debug mode for detailed logging.
+
 
 Usage
 
