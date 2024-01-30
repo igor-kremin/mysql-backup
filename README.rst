@@ -125,11 +125,16 @@ Folder where compressed backups would be stored. The structure of the backup dir
     ...
 
 Database Connection
--------------
-To connect to MySql database using the mysql-connector-python library:
-and parameters defined in .my.cnf file in section [client]:
-if specified `socket` and `host` the `socket` will be used, else host will be used
-if `port` not specified 3306 default will be used
+-------------------
+
+To establish a connection with the MySQL database, the script utilizes the parameters defined in the `[client]` section of the `.my.cnf` configuration file:
+
+- If both `socket` and `host` are specified, the `socket` parameter is prioritized and used for the connection.
+- In the absence of the `socket` parameter, the `host` parameter is used.
+- If the `port` parameter is not specified, the default MySQL port 3306 is used.
+
+This approach ensures that the script can flexibly adapt to various MySQL server configurations while maintaining secure and efficient database connections.
+
 
 
 Command line arguments
