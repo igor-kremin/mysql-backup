@@ -64,6 +64,7 @@ To configure `secure_file_priv`, locate your MySQL configuration file (usually m
 `/home` is used in script by default, it is useful for dedicated mysql server, can be changed in 'secure_file_priv' option of script config file
 
 .. code-block:: none
+
     [client]
     user=<user>
     password=<password>
@@ -76,6 +77,7 @@ To configure `secure_file_priv`, locate your MySQL configuration file (usually m
     sunday_limit=4
     backup_dir=/srv/backups
     secure_file_priv=/home
+
 
 
 if any of the followed options omitted the default value would be used:
@@ -111,6 +113,7 @@ backup_dir
 Folder where compressed backups would be stored. The structure of the backup directory will typically look like this:
 
 .. code-block:: none
+
     backups
     ├── 20240121
     │   ├── roundcube.tgz
