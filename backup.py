@@ -25,8 +25,9 @@ class Backup:
     mysql_config_file = Path("~/.my.cnf").expanduser()
     SecureFilePriv = Path('/home')
 
-    def __init__(self, db_name=None, rocksdb=None, as_csv=False, debug=False, config_file=None):
+    def __init__(self, db_name=None, rocksdb=None, as_csv=False, debug=False, config_file=None, lock=None):
         self.rocksdb = rocksdb
+        self.lock = lock
         self.debug = debug
         self.as_csv = as_csv
         self.db_name = db_name
@@ -136,7 +137,12 @@ class Backup:
             if self.rocksdb:
                 import_sql += 'SET session sql_log_bin=0;\n'
                 import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
-            tables_structures = self.backup_database_structure(db_name, tables)
+            # backup database structure
+            tables_structures = {
+                table_name: self.get_table_structure(db_name, table_name, self.rocksdb) for table_name in tables
+            }
+            if self.lock:
+                self.sql("LOCK TABLES " + ", ".join([f"`{table}` READ" for table in tables_structures.keys()]))
             for table_name in tables:
                 structure, indexes, primary_key = tables_structures[table_name]
                 import_sql += f' {table_name} '.center(60, '#') + '\n'
@@ -154,6 +160,8 @@ class Backup:
                 import_sql += 'SET session rocksdb_bulk_load=0;\n'
             with open(self.SecureFilePriv / f"{db_name}.sql", 'w') as file:
                 file.write(import_sql)
+            if self.lock:
+                self.sql("UNLOCK TABLES;")
             duration = time.time() - start_time
             if self.debug:
                 print(f"Duration: {duration:.2f}s")
@@ -175,11 +183,6 @@ class Backup:
         self.sql(f"SHOW TABLES FROM {db_name}")
         return [t[0] for t in self.cursor.fetchall()]
 
-    def backup_database_structure(self, db_name, tables):
-        return {
-            table_name: self.get_table_structure(db_name, table_name, self.rocksdb) for table_name in tables
-        }
-
     def get_table_structure(self, db_name, table_name, separate_indexes=True):
         self.sql(f"SHOW CREATE TABLE {db_name}.{table_name}")
         create_table_stmt = self.cursor.fetchone()[1]
@@ -198,23 +201,39 @@ class Backup:
 
     def separate_structure_and_indexes(self, create_stmt):
         # Витягуємо назву таблиці, її структуру і індекси
-        match = re.search(r'CREATE TABLE `(\w+)`\s*\((.*)\)\s*(ENGINE=.*)', create_stmt, re.DOTALL)
+        match = re.search(r'CREATE TABLE `(\w+)`\s*\((.*)\)\s*(ENGINE=[^\n]+)(.*?(/\*.*?\*/))?', create_stmt, re.DOTALL)
         if not match:
             raise ValueError("Can not identify structure of CREATE TABLE")
         table_name = match.group(1)
         full_structure = match.group(2)
-        table_settings = match.group(3)
-        if self.rocksdb:
-            table_settings = re.sub(r'ENGINE=\w+', f'ENGINE=ROCKSDB', table_settings)
+        table_settings = re.sub(r' AUTO_INCREMENT=\d+', '', match.group(3))
+        comment = match.group(4)
+        primary_key_match = re.search(r'PRIMARY KEY \(([^)]+)\)', full_structure)
+        primary_key_name = primary_key_match.group(1) if primary_key_match else None
+
         # Розділяємо структуру на поля та індекси
         fields_and_indexes = full_structure.split(",\n  ")
         structure_fields = [field.strip() for field in fields_and_indexes if not re.match(r'KEY|INDEX|UNIQUE', field)]
         indexes = [field.strip() for field in fields_and_indexes if re.match(r'KEY|INDEX|UNIQUE', field) and 'PRIMARY KEY' not in field]
+        allow_unsorted = False
+        if self.rocksdb:
+            table_settings = re.sub(r'ENGINE=\w+', f'ENGINE=ROCKSDB', table_settings)
+            if comment and 'PARTITION BY KEY' in comment:
+                auto_increment_field = [field.split()[0].strip('`') for field in structure_fields if "AUTO_INCREMENT" in field]
+                if auto_increment_field and not any(filter(lambda x: 'PRIMARY KEY' in x, structure_fields)):
+                    structure_fields.append(f'PRIMARY KEY (`{auto_increment_field[0]}`)')
+                    primary_key_name = auto_increment_field[0]
+                else:
+                    allow_unsorted = True
         fields = ",\n  ".join(structure_fields)
         structure_part = f"CREATE TABLE `{table_name}` (\n{fields}\n) {table_settings};"
         indexes_part = "\n".join([f"ALTER TABLE `{table_name}` ADD {index};" for index in indexes])
-        primary_key_match = re.search(r'PRIMARY KEY \(([^)]+)\)', full_structure)
-        primary_key_name = primary_key_match.group(1) if primary_key_match else None
+        if allow_unsorted:
+            index_str = (',\n' + ',\n'.join(indexes) + ')\n') if indexes else '\n'
+            return f"""
+                SET session rocksdb_bulk_load_allow_unsorted=1;
+                CREATE TABLE `{table_name}` (\n{fields}{index_str} {table_settings};
+                SET session rocksdb_bulk_load_allow_unsorted=0;""", None, None
         return structure_part, indexes_part, primary_key_name
 
     @staticmethod
@@ -281,14 +300,16 @@ def main():
     parser.add_argument("-d", "--database", help="Name of the database to backup", default=None)
     parser.add_argument("--rocksdb", help="Export for RocksDB engine", action="store_true")
     parser.add_argument("--csv", help="Use csv format", action="store_true")
+    parser.add_argument("--lock", help="Lock table READ", action="store_true")
     parser.add_argument("--debug", help="Debug mode", action="store_true")
     args = parser.parse_args()
     db_name = args.database
     as_csv = args.csv
     debug = args.debug
+    lock = args.lock
     config_file = args.config
 
-    with Backup(db_name=db_name, rocksdb=args.rocksdb, as_csv=as_csv, debug=debug, config_file=config_file) as backup:
+    with Backup(db_name=db_name, rocksdb=args.rocksdb, as_csv=as_csv, debug=debug, config_file=config_file, lock=lock) as backup:
         try:
             backup.process()
         except mysql.connector.Error as err:
