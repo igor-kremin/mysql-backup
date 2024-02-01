@@ -5,6 +5,8 @@ from mysql.connector import errorcode
 from pathlib import Path
 import argparse
 import configparser
+import logging
+import logging.handlers
 import mysql.connector
 import os
 import re
@@ -12,6 +14,11 @@ import shutil
 import subprocess
 import time
 import traceback
+
+
+def die(message):
+    logging.critical(message)
+    raise ValueError(message)
 
 
 class Backup:
@@ -25,19 +32,18 @@ class Backup:
     mysql_config_file = Path("~/.my.cnf").expanduser()
     SecureFilePriv = Path('/home')
 
-    def __init__(self, db_name=None, rocksdb=None, as_csv=False, debug=False, config_file=None, lock=None):
-        self.rocksdb = rocksdb
-        self.lock = lock
-        self.debug = debug
-        self.as_csv = as_csv
-        self.db_name = db_name
-        self.config_file_path = Path(config_file) if config_file else self.mysql_config_file
-        if self.config_file_path.exists():
-            self.read_config_file(self.config_file_path)
-        if not self.db_config or self.debug:
-            self.show_connection_settings()
-            if not self.db_config:
-                raise ValueError("MySQL configuration not found")
+    def __init__(self, **kwargs):
+        self.rocksdb = kwargs.get('rocksdb')
+        self.debug = kwargs.get('debug')
+        self.lock = kwargs.get('lock')
+        self.as_csv = kwargs.get('as_csv')
+        self.db_name = kwargs.get('db_name')
+        self.log = kwargs.get('log')
+        self.config_file_path = Path(kwargs.get('config') or self.mysql_config_file)
+        self.read_config_file()
+        logging.debug(self.connection_settings())
+        if not self.db_config:
+            die("MySQL configuration not found")
 
     def __enter__(self):
         self.conn = mysql.connector.connect(**self.db_config)
@@ -45,9 +51,9 @@ class Backup:
         self.sql("SHOW VARIABLES like 'secure_file_priv'")
         mysql_secure_file_priv = self.cursor.fetchone()[1]
         if not mysql_secure_file_priv:
-            raise ValueError("`secure_file_priv` is not configured in mysql config file")
+            die("`secure_file_priv` is not configured in mysql config file.")
         if Path(mysql_secure_file_priv) != self.SecureFilePriv:
-            raise ValueError("set `secure_file_priv` in [backup] section of config file or use /home as default")
+            die("set `secure_file_priv` in [backup] section of config file or use /home as default")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -56,36 +62,31 @@ class Backup:
         if self.conn:
             self.conn.close()
 
+    def print(self, **kwargs):
+        if not self.log:
+            print(**kwargs)
+
     def execute(self, command):
-        if self.debug:
-            print(f"Executing command: {command}")
+        logging.debug(f"Executing command: {command}")
         try:
-            result = subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if self.debug:
-                print(f"Command output: {result.stdout.decode()}")
-                print(f"Command error (if any): {result.stderr.decode()}")
-                print(f"Command exit code: {result.returncode}")
+            subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError as e:
-            print(f"Error running command '{command}': {e}")
-            if self.debug:
-                traceback.print_exc()
-            raise e
+            logging.critical(traceback.format_exc())
+            die(f"Error running command '{command}': {e}")
 
     def sql(self, query):
-        if self.debug:
-            print(f'SQL: {query}')
+        logging.debug(f'SQL: {query}')
         try:
             self.cursor.execute(query)
         except mysql.connector.Error as err:
-            print(f'\nSQL: {query}')
-            raise err
+            logging.critical(f'\nSQL: {query}')
+            die(err)
 
-    def read_config_file(self, config_file):
-        if config_file.is_file():
-            if self.debug:
-                print(f'Reading config file {config_file}')
+    def read_config_file(self):
+        if self.config_file_path.is_file():
+            logging.debug(f'Reading config file {self.config_file_path}')
             config = configparser.ConfigParser()
-            config.read(config_file)
+            config.read(self.config_file_path)
             if 'client' in config:
                 client = config['client']
                 if 'user' in client:
@@ -113,11 +114,12 @@ class Backup:
                 if 'secure_file_priv' in backup:
                     self.SecureFilePriv = Path(backup['secure_file_priv'])
 
-    def show_connection_settings(self):
-        connection_settings = {key: (value if value != 'password' else '*' * 8) for key, value in self.db_config.items()}
-        print('Connection settings:')
+    def connection_settings(self):
+        message = 'Connection settings: '
+        connection_settings = {key: (value if key != 'password' else '*' * 8) for key, value in self.db_config.items()}
         for key, value in connection_settings.items():
-            print(f"{key}: {str(value).ljust(40)}")
+            message += f"\t{key}: {str(value)}"
+        return message
 
     def get_databases(self, exclude_dbs):
         self.sql("SHOW DATABASES")
@@ -126,56 +128,64 @@ class Backup:
         return [db[0] for db in self.cursor if not any(re.match(pattern, db[0]) for pattern in exclude_patterns)]
 
     def process(self):
-        databases = [self.db_name] if self.db_name else self.get_databases(exclude_databases=self.exclude_databases)
-
+        databases = [self.db_name] if self.db_name else self.get_databases(self.exclude_databases)
         for db_name in databases:
-            print(f"Backing up database: {db_name} ".ljust(60, '.'), flush=True, end='\n' if self.debug else '')
-            start_time = time.time()
-            self.cleanup_output_folder(db_name)
-            tables = self.get_db_tables(db_name)
-            import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
-            if self.rocksdb:
-                import_sql += 'SET session sql_log_bin=0;\n'
-                import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
-            # backup database structure
-            tables_structures = {
-                table_name: self.get_table_structure(db_name, table_name, self.rocksdb) for table_name in tables
-            }
-            if self.lock:
-                self.sql("LOCK TABLES " + ", ".join([f"`{table}` READ" for table in tables_structures.keys()]))
-            for table_name in tables:
-                structure, indexes, primary_key = tables_structures[table_name]
-                import_sql += f' {table_name} '.center(60, '#') + '\n'
-                import_sql += f'DROP TABLE IF EXISTS `{table_name}`;\n'
-                import_sql += f'{structure}\n'
-                self.export_table_data(db_name, table_name, primary_key)
-                ext = 'csv' if self.as_csv else 'data'
-                sql = self.inline_sql if self.as_csv else ''
-                table_file = self.SecureFilePriv / 'db' / f'{table_name}.{ext}'
-                import_sql += f"\nLOAD DATA INFILE '{table_file}' INTO TABLE `{table_name}` {sql};\n\n"
-                if indexes:
-                    import_sql += f'{indexes}\n'
-                import_sql += '\n'
-            if self.rocksdb:
-                import_sql += 'SET session rocksdb_bulk_load=0;\n'
-            with open(self.SecureFilePriv / f"{db_name}.sql", 'w') as file:
-                file.write(import_sql)
-            if self.lock:
-                self.sql("UNLOCK TABLES;")
-            duration = time.time() - start_time
-            if self.debug:
-                print(f"Duration: {duration:.2f}s")
-            else:
-                print(f"\tok {duration:.2f}s")
-            self.compress(self.backup_dir / self. get_suffix() / f"{db_name}.tgz", db_name)
-            self.cleanup_output_folder(db_name)
+            try:
+                if not self.log and not self.debug:
+                    print(f"Backing up database: {db_name} ".ljust(60, '.'), flush=True, end='')
+                else:
+                    logging.info(f"Backing up '{db_name}'")
+                start_time = time.time()
+                self.cleanup_output_folder(db_name)
+                tables = self.get_db_tables(db_name)
+                import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
+                if self.rocksdb:
+                    import_sql += 'SET session sql_log_bin=0;\n'
+                    import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
+                # backup database structure
+                tables_structures = {
+                    table_name: self.get_table_structure(db_name, table_name, self.rocksdb) for table_name in tables
+                }
+                if self.lock:
+                    self.sql("LOCK TABLES " + ", ".join([f"`{table}` READ" for table in tables_structures.keys()]))
+                else:
+                    self.sql("START TRANSACTION WITH CONSISTENT SNAPSHOT;")
+                for table_name in tables:
+                    structure, indexes, primary_key = tables_structures[table_name]
+                    import_sql += f' {table_name} '.center(60, '#') + '\n'
+                    import_sql += f'DROP TABLE IF EXISTS `{table_name}`;\n'
+                    import_sql += f'{structure}\n'
+                    self.export_table_data(db_name, table_name, primary_key)
+                    ext = 'csv' if self.as_csv else 'data'
+                    sql = self.inline_sql if self.as_csv else ''
+                    table_file = self.SecureFilePriv / 'db' / f'{table_name}.{ext}'
+                    import_sql += f"\nLOAD DATA INFILE '{table_file}' INTO TABLE `{table_name}` {sql};\n\n"
+                    if indexes:
+                        import_sql += f'{indexes}\n'
+                    import_sql += '\n'
+                if self.rocksdb:
+                    import_sql += 'SET session rocksdb_bulk_load=0;\n'
+                with open(self.SecureFilePriv / f"{db_name}.sql", 'w') as file:
+                    file.write(import_sql)
+                duration = time.time() - start_time
+                if not self.log and not self.debug:
+                    print(f"\tok {duration:.2f}s")
+                else:
+                    logging.info(f"Export duration: {duration:.2f}s")
+                self.compress(self.backup_dir / self. get_suffix() / f"{db_name}.tgz", db_name)
+                self.cleanup_output_folder(db_name)
+            except Exception as error:
+                logging.critical(traceback.format_exc())
+                die(error)
+            finally:
+                self.sql("UNLOCK TABLES;" if self.lock else "COMMIT;")
+
         self.clean_old_backups()
 
     def cleanup_output_folder(self, db_name):
         sql_file = (self.SecureFilePriv / f"{db_name}.sql")
         if sql_file.exists():
-            if self.debug:
-                print(f'Removing {sql_file}')
+            logging.debug(f'Removing {sql_file}')
             sql_file.unlink()
         [file_path.unlink() for file_path in (self.SecureFilePriv / 'db').iterdir() if file_path.is_file()]
 
@@ -203,7 +213,7 @@ class Backup:
         # Витягуємо назву таблиці, її структуру і індекси
         match = re.search(r'CREATE TABLE `(\w+)`\s*\((.*)\)\s*(ENGINE=[^\n]+)(.*?(/\*.*?\*/))?', create_stmt, re.DOTALL)
         if not match:
-            raise ValueError("Can not identify structure of CREATE TABLE")
+            die("Can not identify structure of CREATE TABLE")
         table_name = match.group(1)
         full_structure = match.group(2)
         table_settings = re.sub(r' AUTO_INCREMENT=\d+', '', match.group(3))
@@ -246,8 +256,7 @@ class Backup:
     def clean_old_backups(self):
         backup_path = Path(self.backup_dir)
         if not backup_path.is_dir():
-            print(f"Folder {self.backup_dir} does not exist.")
-            return
+            die(f"Folder {self.backup_dir} does not exist.")
         date_pattern = re.compile(r'\d{8}')
         all_directories = [folder for folder in backup_path.iterdir() if folder.is_dir() and date_pattern.fullmatch(folder.name)]
         weekdays_dirs = []
@@ -270,7 +279,7 @@ class Backup:
     def remove_old_directories(directories, limit):
         sorted_dirs = sorted(directories, key=os.path.getmtime)
         for dir_to_remove in sorted_dirs[:-limit]:
-            print(f"Removing folder: {dir_to_remove}")
+            logging.debug(f"Removing folder: {dir_to_remove}")
             shutil.rmtree(dir_to_remove)
 
     def compress(self, file_name, db_name):
@@ -284,42 +293,65 @@ class Backup:
                 new_dir_name = backup_dir.parent / formatted_date
                 shutil.move(str(backup_dir), str(new_dir_name))
         backup_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Compressing {file_name} ".ljust(60, '.'), flush=True, end='\n' if self.debug else '')
+        if not self.log and not self.debug:
+            print(f"Compressing {file_name} ".ljust(60, '.'), flush=True, end='')
+        else:
+            logging.info(f"Compressing {file_name}")
         command = f'{self.nice} tar -chzf {file_name} -C /home db {db_name}.sql'
         self.execute(command)
         duration = time.time() - start_time
-        if self.debug:
-            print(f"{command} Duration {duration:.2f}s")
-        else:
+        if not self.log and not self.debug:
             print(f"\tok {duration:.2f}s")
+        else:
+            logging.info(f"Compress duration {duration:.2f}s")
+
+
+def configure_logging(log_level=logging.INFO, log_file='/var/log/backup.log'):
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+    if log_file and log_level != logging.DEBUG:
+        formatter = logging.Formatter('%(asctime)s %(levelname)-7s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        handler = logging.handlers.RotatingFileHandler(log_file, maxBytes=1*1024*1024, backupCount=10)
+    else:
+        formatter = logging.Formatter('%(message)s')
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Backup MySQL databases")
     parser.add_argument("-с", "--config", help="Path to the config file", default=None)
     parser.add_argument("-d", "--database", help="Name of the database to backup", default=None)
+    parser.add_argument("-l", "--log", help="path to log file", default=None)
     parser.add_argument("--rocksdb", help="Export for RocksDB engine", action="store_true")
     parser.add_argument("--csv", help="Use csv format", action="store_true")
-    parser.add_argument("--lock", help="Lock table READ", action="store_true")
+    parser.add_argument("--lock", help="use LOCK TABLE READ instead of transaction ", action="store_true")
     parser.add_argument("--debug", help="Debug mode", action="store_true")
     args = parser.parse_args()
-    db_name = args.database
-    as_csv = args.csv
-    debug = args.debug
-    lock = args.lock
-    config_file = args.config
-
-    with Backup(db_name=db_name, rocksdb=args.rocksdb, as_csv=as_csv, debug=debug, config_file=config_file, lock=lock) as backup:
+    kwargs = {
+        'as_csv': args.csv,
+        'lock': args.lock,
+        'debug': args.debug,
+        'rocksdb': args.rocksdb,
+        'config_file': args.config,
+        'db_name': args.database,
+        'log': args.log
+    }
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    configure_logging(log_level, log_file=args.log)
+    with Backup(**kwargs) as backup:
         try:
             backup.process()
         except mysql.connector.Error as err:
             if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
-                raise ValueError("Something is wrong with your user name or password")
+                die("Something is wrong with your user name or password")
             elif err.errno == errorcode.ER_BAD_DB_ERROR:
-                raise ValueError("Database does not exist")
+                die("Database does not exist")
             else:
-                print(err)
-                traceback.print_exc()
+                logging.critical(traceback.format_exc())
+                die(err)
 
 
 if __name__ == "__main__":
