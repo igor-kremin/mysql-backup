@@ -140,6 +140,7 @@ class Backup:
                 self.cleanup_output_folder(db_name)
                 tables = self.get_db_tables(db_name)
                 import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
+                import_sql += f' USE `{db_name}`;\n'
                 if self.rocksdb:
                     import_sql += 'SET session sql_log_bin=0;\n'
                     import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
@@ -153,12 +154,16 @@ class Backup:
                     self.sql("START TRANSACTION WITH CONSISTENT SNAPSHOT;")
                 for table_name in tables:
                     structure, indexes, primary_key = tables_structures[table_name]
+                    charset_pattern = r"CHARSET=(\w+)(?:\s+COLLATE=\w+)?"
+                    match = re.search(charset_pattern, structure)
+                    charset = ('CHARACTER SET %s' % match.group(1)) if match else ''
                     import_sql += f' {table_name} '.center(60, '#') + '\n'
                     import_sql += f'DROP TABLE IF EXISTS `{table_name}`;\n'
                     import_sql += f'{structure};\n'
                     self.export_table_data(db_name, table_name, primary_key)
                     ext = 'csv' if self.as_csv else 'data'
-                    sql = self.inline_sql if self.as_csv else ''
+                    csv_sql = self.inline_sql if self.as_csv else ''
+                    sql = f'{charset} {csv_sql}'
                     table_file = self.SecureFilePriv / 'db' / f'{table_name}.{ext}'
                     import_sql += f"\nLOAD DATA INFILE '{table_file}' INTO TABLE `{table_name}` {sql};\n\n"
                     if indexes:
