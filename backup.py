@@ -1,4 +1,4 @@
-#!/usr/bin/python3.11
+#!/usr/bin/python3
 
 from datetime import datetime
 from mysql.connector import errorcode
@@ -155,7 +155,7 @@ class Backup:
                     structure, indexes, primary_key = tables_structures[table_name]
                     import_sql += f' {table_name} '.center(60, '#') + '\n'
                     import_sql += f'DROP TABLE IF EXISTS `{table_name}`;\n'
-                    import_sql += f'{structure}\n'
+                    import_sql += f'{structure};\n'
                     self.export_table_data(db_name, table_name, primary_key)
                     ext = 'csv' if self.as_csv else 'data'
                     sql = self.inline_sql if self.as_csv else ''
@@ -237,7 +237,7 @@ class Backup:
                 else:
                     allow_unsorted = True
         fields = ",\n  ".join(structure_fields)
-        structure_part = f"CREATE TABLE `{table_name}` (\n{fields}\n) {table_settings};"
+        structure_part = f"CREATE TABLE `{table_name}` (\n{fields}\n) {table_settings}"
         indexes_part = "\n".join([f"ALTER TABLE `{table_name}` ADD {index};" for index in indexes])
         if allow_unsorted:
             index_str = (',\n' + ',\n'.join(indexes) + ')\n') if indexes else '\n'
