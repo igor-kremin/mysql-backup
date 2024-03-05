@@ -22,10 +22,10 @@ def die(message):
 
 
 class Backup:
-    exclude_databases = []
+    exclude_databases = ['information_schema', 'performance_schema', 'sys']
     inline_sql = "FIELDS TERMINATED BY ';' OPTIONALLY ENCLOSED BY '\"' LINES TERMINATED BY '\\n'"
     nice = 'nice -n 15 ionice -c2 -n5'
-    backup_dir = Path('/srv/backup')
+    backup_dir = Path('/srv/backups')
     db_config = {}
     weekday_limit = 10
     sunday_limit = 4
@@ -49,6 +49,7 @@ class Backup:
         self.conn = mysql.connector.connect(**self.db_config)
         self.cursor = self.conn.cursor()
         self.sql("SHOW VARIABLES like 'secure_file_priv'")
+        self.sql("SET SESSION wait_timeout = 28800")
         mysql_secure_file_priv = self.cursor.fetchone()[1]
         if not mysql_secure_file_priv:
             die("`secure_file_priv` is not configured in mysql config file.")
