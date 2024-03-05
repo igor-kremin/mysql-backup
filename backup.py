@@ -48,8 +48,8 @@ class Backup:
     def __enter__(self):
         self.conn = mysql.connector.connect(**self.db_config)
         self.cursor = self.conn.cursor()
-        self.sql("SHOW VARIABLES like 'secure_file_priv'")
         self.sql("SET SESSION wait_timeout = 28800")
+        self.sql("SHOW VARIABLES like 'secure_file_priv'")
         mysql_secure_file_priv = self.cursor.fetchone()[1]
         if not mysql_secure_file_priv:
             die("`secure_file_priv` is not configured in mysql config file.")
