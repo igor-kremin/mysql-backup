@@ -25,7 +25,7 @@ Ensure the python3 installed as default python
 
 run under python 3.6
 ------------
-- ``pip3 install mysql-connector-python==8.0.11``       # for run with root permission for python 3.5
+- ``pip3 install mysql-connector-python==8.0.11``       # for run with root permission for python 3.6
 - ``sed -i 's|#!/usr/bin/python3.11|#!/usr/bin/python3|' /usr/local/bin/backup.py``
 
 
