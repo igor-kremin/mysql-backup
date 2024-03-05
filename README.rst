@@ -17,7 +17,7 @@ Installation
 
 Ensure the python3 installed as default python
 
-- ``pip3 install mysql-connector-python``       # run with root permission
+- ``pip3 install mysql-connector-python``       # execute with root permission
 - ``cd /opt``
 - ``git clone https://github.com/igor-kremin/mysql_backup.git mysql_backup``
 - ``chmod 755 /opt/mysql_backup/backup.py``
@@ -25,7 +25,7 @@ Ensure the python3 installed as default python
 
 run under python 3.6
 ------------
-- ``pip3 install mysql-connector-python==8.0.11``       # for run with root permission for python 3.6
+- ``pip3 install mysql-connector-python==8.0.17``       # for python 3.6
 - ``sed -i 's|#!/usr/bin/python3.11|#!/usr/bin/python3|' /usr/local/bin/backup.py``
 
 
