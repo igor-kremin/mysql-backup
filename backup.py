@@ -9,6 +9,8 @@ import logging
 import logging.handlers
 import mysql.connector
 import os
+import pwd
+import grp
 import re
 import shutil
 import subprocess
@@ -142,6 +144,7 @@ class Backup:
                 else:
                     logging.info(f"Backing up '{db_name}'")
                 start_time = time.time()
+
                 self.cleanup_output_folder(db_name)
                 tables = self.get_db_tables(db_name)
                 import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
@@ -169,7 +172,7 @@ class Backup:
                     ext = 'csv' if self.as_csv else 'data'
                     csv_sql = self.inline_sql if self.as_csv else ''
                     sql = f'{charset} {csv_sql}'
-                    table_file = self.SecureFilePriv / 'db' / f'{table_name}.{ext}'
+                    table_file = self.SecureFilePriv / db_name / f'{table_name}.{ext}'
                     import_sql += f"\nLOAD DATA INFILE '{table_file}' INTO TABLE `{table_name}` {sql};\n\n"
                     if indexes:
                         import_sql += f'{indexes}\n'
@@ -180,9 +183,9 @@ class Backup:
                     file.write(import_sql)
                 duration = time.time() - start_time
                 if not self.log and not self.debug:
-                    print(f"\tok {duration:.2f}s")
+                    print(f"\tok {duration:7.2f}s")
                 else:
-                    logging.info(f"Export duration: {duration:.2f}s")
+                    logging.info(f"Export duration: {duration:7.2f}s")
                 self.compress(self.backup_dir / self. get_suffix() / f"{db_name}.tgz", db_name)
                 self.cleanup_output_folder(db_name)
             except Exception as error:
@@ -198,7 +201,9 @@ class Backup:
         if sql_file.exists():
             logging.debug(f'Removing {sql_file}')
             sql_file.unlink()
-        [file_path.unlink() for file_path in (self.SecureFilePriv / 'db').iterdir() if file_path.is_file()]
+        archive_folder = self.SecureFilePriv / db_name
+        if archive_folder.exists():
+            shutil.rmtree(archive_folder)
 
     def get_db_tables(self, db_name):
         self.sql(f"SHOW TABLES FROM `{db_name}`")
@@ -214,10 +219,18 @@ class Backup:
         return create_table_stmt, None, None
 
     def export_table_data(self, db_name, table_name, primary_key):
+        archive_folder = self.SecureFilePriv / db_name
+        if not archive_folder.exists():
+            archive_folder.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chown(archive_folder, pwd.getpwnam('mysql').pw_uid, grp.getgrnam('mysql').gr_gid)
+            except Exception as error:
+                logging.warning(f"Can not change owner of {archive_folder}: {error}")
+                exit(1)
         sql = self.inline_sql if self.as_csv else ''
         ext = 'csv' if self.as_csv else 'data'
         sort = f'ORDER BY {primary_key}' if primary_key else ''
-        sql_query = f"SELECT * INTO OUTFILE '{self.SecureFilePriv / 'db' / f'{table_name}.{ext}'}' {sql} FROM `{db_name}`.`{table_name}` {sort}"
+        sql_query = f"SELECT * INTO OUTFILE '{self.SecureFilePriv / db_name / f'{table_name}.{ext}'}' {sql} FROM `{db_name}`.`{table_name}` {sort}"
         self.sql(sql_query)
 
     @staticmethod
@@ -312,9 +325,9 @@ class Backup:
         self.execute(command)
         duration = time.time() - start_time
         if not self.log and not self.debug:
-            print(f"\tok {duration:.2f}s")
+            print(f"\tok {duration:7.2f}s")
         else:
-            logging.info(f"Compress duration {duration:.2f}s")
+            logging.info(f"Compress duration {duration:7.2f}s")
 
 
 def configure_logging(log_level=logging.INFO, log_file='/var/log/backup.log'):
@@ -367,4 +380,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
