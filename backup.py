@@ -201,11 +201,11 @@ class Backup:
         [file_path.unlink() for file_path in (self.SecureFilePriv / 'db').iterdir() if file_path.is_file()]
 
     def get_db_tables(self, db_name):
-        self.sql(f"SHOW TABLES FROM {db_name}")
+        self.sql(f"SHOW TABLES FROM `{db_name}`")
         return [t[0] for t in self.cursor.fetchall()]
 
     def get_table_structure(self, db_name, table_name, separate_indexes=True):
-        self.sql(f"SHOW CREATE TABLE {db_name}.{table_name}")
+        self.sql(f"SHOW CREATE TABLE `{db_name}`.`{table_name}`")
         create_table_stmt = self.cursor.fetchone()[1]
         if separate_indexes:
             # Розділяємо CREATE TABLE на структуру та індекси
@@ -217,7 +217,7 @@ class Backup:
         sql = self.inline_sql if self.as_csv else ''
         ext = 'csv' if self.as_csv else 'data'
         sort = f'ORDER BY {primary_key}' if primary_key else ''
-        sql_query = f"SELECT * INTO OUTFILE '{self.SecureFilePriv / 'db' / f'{table_name}.{ext}'}' {sql} FROM {db_name}.{table_name} {sort}"
+        sql_query = f"SELECT * INTO OUTFILE '{self.SecureFilePriv / 'db' / f'{table_name}.{ext}'}' {sql} FROM `{db_name}`.`{table_name}` {sort}"
         self.sql(sql_query)
 
     @staticmethod
