@@ -128,10 +128,15 @@ class Backup:
         exclude_patterns = [f"^{pattern.replace('*', '.*')}$" if '*' in pattern else f"^{pattern}$" for pattern in exclude_dbs]
         return [db[0] for db in self.cursor if not any(re.match(pattern, db[0]) for pattern in exclude_patterns)]
 
+    def has_rocksdb_tables(self, db_name):
+        self.sql(f"SELECT count(*) FROM information_schema.tables WHERE table_schema = '{db_name}' and `engine` = 'ROCKSDB'")
+        return self.cursor.fetchone()[0] > 0
+
     def process(self):
         databases = [self.db_name] if self.db_name else self.get_databases(self.exclude_databases)
         for db_name in databases:
             try:
+                rocksdb = self.rocksdb or self.has_rocksdb_tables(db_name)
                 if not self.log and not self.debug:
                     print(f"Backing up database: {db_name} ".ljust(60, '.'), flush=True, end='')
                 else:
@@ -141,13 +146,13 @@ class Backup:
                 tables = self.get_db_tables(db_name)
                 import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
                 import_sql += f' USE `{db_name}`;\n'
-                if self.rocksdb:
-                    import_sql += 'SET session sql_log_bin=0;\n'
-                    import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
                 # backup database structure
                 tables_structures = {
-                    table_name: self.get_table_structure(db_name, table_name, self.rocksdb) for table_name in tables
+                    table_name: self.get_table_structure(db_name, table_name, rocksdb) for table_name in tables
                 }
+                if rocksdb:
+                    import_sql += 'SET session sql_log_bin=0;\n'
+                    import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
                 if self.lock:
                     self.sql("LOCK TABLES " + ", ".join([f"`{table}` READ" for table in tables_structures.keys()]))
                 else:
@@ -169,7 +174,7 @@ class Backup:
                     if indexes:
                         import_sql += f'{indexes}\n'
                     import_sql += '\n'
-                if self.rocksdb:
+                if rocksdb:
                     import_sql += 'SET session rocksdb_bulk_load=0;\n'
                 with open(self.SecureFilePriv / f"{db_name}.sql", 'w') as file:
                     file.write(import_sql)
@@ -215,7 +220,8 @@ class Backup:
         sql_query = f"SELECT * INTO OUTFILE '{self.SecureFilePriv / 'db' / f'{table_name}.{ext}'}' {sql} FROM {db_name}.{table_name} {sort}"
         self.sql(sql_query)
 
-    def separate_structure_and_indexes(self, create_stmt):
+    @staticmethod
+    def separate_structure_and_indexes(create_stmt):
         # Витягуємо назву таблиці, її структуру і індекси
         match = re.search(r'CREATE TABLE `(\w+)`\s*\((.*)\)\s*(ENGINE=[^\n]+)(.*?(/\*.*?\*/))?', create_stmt, re.DOTALL)
         if not match:
@@ -232,15 +238,14 @@ class Backup:
         structure_fields = [field.strip() for field in fields_and_indexes if not re.match(r'KEY|INDEX|UNIQUE', field)]
         indexes = [field.strip() for field in fields_and_indexes if re.match(r'KEY|INDEX|UNIQUE', field) and 'PRIMARY KEY' not in field]
         allow_unsorted = False
-        if self.rocksdb:
-            table_settings = re.sub(r'ENGINE=\w+', f'ENGINE=ROCKSDB', table_settings)
-            if comment and 'PARTITION BY KEY' in comment:
-                auto_increment_field = [field.split()[0].strip('`') for field in structure_fields if "AUTO_INCREMENT" in field]
-                if auto_increment_field and not any(filter(lambda x: 'PRIMARY KEY' in x, structure_fields)):
-                    structure_fields.append(f'PRIMARY KEY (`{auto_increment_field[0]}`)')
-                    primary_key_name = auto_increment_field[0]
-                else:
-                    allow_unsorted = True
+        table_settings = re.sub(r'ENGINE=\w+', f'ENGINE=ROCKSDB', table_settings)
+        if comment and 'PARTITION BY KEY' in comment:
+            auto_increment_field = [field.split()[0].strip('`') for field in structure_fields if "AUTO_INCREMENT" in field]
+            if auto_increment_field and not any(filter(lambda x: 'PRIMARY KEY' in x, structure_fields)):
+                structure_fields.append(f'PRIMARY KEY (`{auto_increment_field[0]}`)')
+                primary_key_name = auto_increment_field[0]
+            else:
+                allow_unsorted = True
         fields = ",\n  ".join(structure_fields)
         structure_part = f"CREATE TABLE `{table_name}` (\n{fields}\n) {table_settings}"
         indexes_part = "\n".join([f"ALTER TABLE `{table_name}` ADD {index};" for index in indexes])
