@@ -23,7 +23,7 @@ Ensure the python3 installed as default python
 - ``chmod 755 /opt/mysql_backup/backup.py``
 - ``ln -s /opt/mysql_backup/backup.py /usr/local/bin/backup.py``
 
-run under python 3.6
+run in python 3.6
 ------------
 - ``pip3 install mysql-connector-python==8.0.17``       # for python 3.6
 - ``sed -i 's|#!/usr/bin/python3.11|#!/usr/bin/python3|' /usr/local/bin/backup.py``
