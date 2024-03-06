@@ -77,7 +77,7 @@ To configure `secure_file_priv`, locate your MySQL configuration file (usually m
     socket=/run/mysql.sock
 
     [backup]
-    exclude=performance_schema information_schema Database mysql sys temp*
+    exclude=Database mysql sys temp*
     nice=nice -n 15 ionice -c2 -n5
     weekday_limit=10
     sunday_limit=4
