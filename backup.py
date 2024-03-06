@@ -321,7 +321,7 @@ class Backup:
             print(f"Compressing {file_name} ".ljust(60, '.'), flush=True, end='')
         else:
             logging.info(f"Compressing {file_name}")
-        command = f'{self.nice} tar -chzf {file_name} -C /home db {db_name}.sql'
+        command = f'{self.nice} tar -chzf {file_name} -C /home {db_name} {db_name}.sql'
         self.execute(command)
         duration = time.time() - start_time
         if not self.log and not self.debug:
