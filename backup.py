@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 
 from datetime import datetime
-from mysql.connector import errorcode
 from pathlib import Path
 import argparse
 import configparser
@@ -43,6 +42,9 @@ class Backup:
         self.log = kwargs.get('log')
         self.config_file_path = Path(kwargs.get('config') or self.mysql_config_file)
         self.read_config_file()
+        self.path = kwargs.get('save')
+        if self.path and not Path(self.path).is_dir():
+            die(f"Folder {self.path} does not exist.")
         logging.debug(self.connection_settings())
         if not self.db_config:
             die("MySQL configuration not found")
@@ -112,8 +114,8 @@ class Backup:
                     self.weekday_limit = int(backup['weekday_limit'])
                 if 'sunday_limit' in backup:
                     self.sunday_limit = int(backup['sunday_limit'])
-                if 'backup_dir' in backup:
-                    self.backup_dir = Path(backup['backup_dir'])
+                if 'path' in backup:
+                    self.backup_dir = Path(backup['path'])
                 if 'secure_file_priv' in backup:
                     self.SecureFilePriv = Path(backup['secure_file_priv'])
 
@@ -186,15 +188,16 @@ class Backup:
                     print(f"\tok {duration:7.2f}s")
                 else:
                     logging.info(f"Export duration: {duration:7.2f}s")
-                self.compress(self.backup_dir / self. get_suffix() / f"{db_name}.tgz", db_name)
+                path = Path(self.path) if self.path else (self.backup_dir / self. get_suffix())
+                self.compress(path / f"{db_name}.tgz", db_name)
                 self.cleanup_output_folder(db_name)
             except Exception as error:
                 logging.critical(traceback.format_exc())
                 die(error)
             finally:
                 self.sql("UNLOCK TABLES;" if self.lock else "COMMIT;")
-
-        self.clean_old_backups()
+        if not self.path:
+            self.clean_old_backups()
 
     def cleanup_output_folder(self, db_name):
         sql_file = (self.SecureFilePriv / f"{db_name}.sql")
@@ -321,7 +324,7 @@ class Backup:
             print(f"Compressing {file_name} ".ljust(60, '.'), flush=True, end='')
         else:
             logging.info(f"Compressing {file_name}")
-        command = f'{self.nice} tar -chzf {file_name} -C /home {db_name} {db_name}.sql'
+        command = f'{self.nice} tar -chzf {file_name} -C {self.SecureFilePriv} {db_name} {db_name}.sql'
         self.execute(command)
         duration = time.time() - start_time
         if not self.log and not self.debug:
@@ -348,11 +351,12 @@ def main():
     parser = argparse.ArgumentParser(description="Backup MySQL databases")
     parser.add_argument("-с", "--config", help="Path to the config file", default=None)
     parser.add_argument("-d", "--databases", help="Names of the databases to backup split by ','", default=None)
-    parser.add_argument("-l", "--log", help="path to log file", default=None)
+    parser.add_argument("-s", "--save", help="Path where backups would be saved, default '/srv/backups'", default=None)
     parser.add_argument("--rocksdb", help="Export for RocksDB engine", action="store_true")
     parser.add_argument("--csv", help="Use csv format", action="store_true")
     parser.add_argument("--lock", help="use LOCK TABLE READ instead of transaction ", action="store_true")
     parser.add_argument("--debug", help="Debug mode", action="store_true")
+    parser.add_argument("-l", "--log", help="path to log file", default=None)
     args = parser.parse_args()
     kwargs = {
         'as_csv': args.csv,
@@ -361,7 +365,8 @@ def main():
         'rocksdb': args.rocksdb,
         'config_file': args.config,
         'db_names': args.databases,
-        'log': args.log
+        'save': args.save,
+        'log': args.log,
     }
     log_level = logging.DEBUG if args.debug else logging.INFO
     configure_logging(log_level, log_file=args.log)
@@ -369,9 +374,9 @@ def main():
         try:
             backup.process()
         except mysql.connector.Error as err:
-            if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
+            if err.errno == mysql.connector.errorcode.ER_ACCESS_DENIED_ERROR:
                 die("Something is wrong with your user name or password")
-            elif err.errno == errorcode.ER_BAD_DB_ERROR:
+            elif err.errno == mysql.connector.errorcode.ER_BAD_DB_ERROR:
                 die("Database does not exist")
             else:
                 logging.critical(traceback.format_exc())
