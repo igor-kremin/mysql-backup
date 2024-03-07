@@ -24,7 +24,7 @@ def die(message):
 
 
 class Backup:
-    exclude_databases = ['information_schema', 'performance_schema', 'sys']
+    exclude_databases = ['information_schema', 'performance_schema', 'sys', 'mysql']
     inline_sql = "FIELDS TERMINATED BY ';' OPTIONALLY ENCLOSED BY '\"' LINES TERMINATED BY '\\n'"
     nice = 'nice -n 15 ionice -c2 -n5'
     backup_dir = Path('/srv/backups')
@@ -135,7 +135,7 @@ class Backup:
         return self.cursor.fetchone()[0] > 0
 
     def process(self):
-        databases = [self.db_name] if self.db_name else self.get_databases(self.exclude_databases)
+        databases = self.db_name.split(',') if self.db_name else self.get_databases(self.exclude_databases)
         for db_name in databases:
             try:
                 rocksdb = self.rocksdb or self.has_rocksdb_tables(db_name)
@@ -347,7 +347,7 @@ def configure_logging(log_level=logging.INFO, log_file='/var/log/backup.log'):
 def main():
     parser = argparse.ArgumentParser(description="Backup MySQL databases")
     parser.add_argument("-с", "--config", help="Path to the config file", default=None)
-    parser.add_argument("-d", "--database", help="Name of the database to backup", default=None)
+    parser.add_argument("-d", "--databases", help="Names of the databases to backup split by ','", default=None)
     parser.add_argument("-l", "--log", help="path to log file", default=None)
     parser.add_argument("--rocksdb", help="Export for RocksDB engine", action="store_true")
     parser.add_argument("--csv", help="Use csv format", action="store_true")
