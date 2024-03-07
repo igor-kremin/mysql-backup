@@ -151,7 +151,7 @@ Command line arguments
 
 The script supports the following command line arguments:
 
-- ``-d, --database``: Specify a particular database to backup. If omitted, all databases are backed up.
+- ``-d, --databases``: Specify a particular databases to backup split by ",". If omitted, all databases are backed up.
 - ``-c, --config``: Path to the configuration file. Defaults to ``.my.cnf`` in the user's home directory.
 - ``--rocksdb``: Convert the <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
 - ``--csv``: Export table data in CSV format.
@@ -163,11 +163,11 @@ Usage
 
 .. code-block:: none
     backup.py
-    backup.py --database=mydatabase
-    backup.py --database=mydatabase --config=/path/to/.my.cnf
-    backup.py --database=mydatabase --config=/path/to/.my.cnf --rocksdb
-    backup.py --database=mydatabase --config=/path/to/.my.cnf --rocksdb --csv
-    backup.py --database=mydatabase --config=/path/to/.my.cnf --rocksdb --csv
+    backup.py --databases=mydatabase,mydatabase2
+    backup.py --databases=mydatabase --config=/path/to/.my.cnf
+    backup.py --databases=mydatabase --config=/path/to/.my.cnf --rocksdb
+    backup.py --databases=mydatabase --config=/path/to/.my.cnf --rocksdb --csv
+    backup.py --databases=mydatabase --config=/path/to/.my.cnf --rocksdb --csv
     backup.py --debug
 
 Before first run
@@ -188,7 +188,7 @@ You can run periodically script with help of crond:
 .. code-block:: none
 
     00 1  *  *  * root /usr/bin/flock -w 1 /var/lock/db-backup.lock -c 'echo `date`; time /usr/local/bin/backup' &>>/var/log/db-backup.log
-    00 1  *  *  * root /usr/bin/flock -w 1 /var/lock/db-backup.lock -c 'echo `date`; time /usr/local/bin/backup test' &>>/var/log/db-backup.log
+    00 1  *  *  * root /usr/bin/flock -w 1 /var/lock/db-backup.lock -c 'echo `date`; time /usr/local/bin/backup -d database1, database2' &>>/var/log/db-backup.log
 
 
 Warning: Blocking Backup Operations
