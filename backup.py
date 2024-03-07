@@ -39,7 +39,7 @@ class Backup:
         self.debug = kwargs.get('debug')
         self.lock = kwargs.get('lock')
         self.as_csv = kwargs.get('as_csv')
-        self.db_name = kwargs.get('db_name')
+        self.db_names = kwargs.get('db_names')
         self.log = kwargs.get('log')
         self.config_file_path = Path(kwargs.get('config') or self.mysql_config_file)
         self.read_config_file()
@@ -135,7 +135,7 @@ class Backup:
         return self.cursor.fetchone()[0] > 0
 
     def process(self):
-        databases = self.db_name.split(',') if self.db_name else self.get_databases(self.exclude_databases)
+        databases = self.db_names.split(',') if self.db_names else self.get_databases(self.exclude_databases)
         for db_name in databases:
             try:
                 rocksdb = self.rocksdb or self.has_rocksdb_tables(db_name)
@@ -360,7 +360,7 @@ def main():
         'debug': args.debug,
         'rocksdb': args.rocksdb,
         'config_file': args.config,
-        'db_name': args.database,
+        'db_names': args.databases,
         'log': args.log
     }
     log_level = logging.DEBUG if args.debug else logging.INFO
