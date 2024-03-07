@@ -151,12 +151,14 @@ Command line arguments
 
 The script supports the following command line arguments:
 
-- ``-d, --databases``: Specify a particular databases to backup split by ",". If omitted, all databases are backed up.
 - ``-c, --config``: Path to the configuration file. Defaults to ``.my.cnf`` in the user's home directory.
+- ``-d, --databases``: Specify a particular databases to backup split by ",". If omitted, all databases are backed up.
+- ``-s, --save``: Path where backups would be saved, default '/srv/backups'.
 - ``--rocksdb``: Convert the <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
 - ``--csv``: Export table data in CSV format.
 - ``--lock``: Lock tables of the database during backup.
 - ``--debug``: Enable debug mode for detailed logging.
+- ``-l, --log``: Path to log file.
 
 
 Usage
