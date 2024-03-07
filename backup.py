@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from mysql.connector import errorcode
 import argparse
 import configparser
 import logging
@@ -374,9 +375,9 @@ def main():
         try:
             backup.process()
         except mysql.connector.Error as err:
-            if err.errno == mysql.connector.errorcode.ER_ACCESS_DENIED_ERROR:
+            if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
                 die("Something is wrong with your user name or password")
-            elif err.errno == mysql.connector.errorcode.ER_BAD_DB_ERROR:
+            elif err.errno == errorcode.ER_BAD_DB_ERROR:
                 die("Database does not exist")
             else:
                 logging.critical(traceback.format_exc())
