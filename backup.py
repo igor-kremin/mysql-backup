@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from mysql.connector import errorcode
+from mysql.connector import errors, errorcode
 import argparse
 import configparser
 import logging
@@ -25,6 +25,8 @@ def die(message):
 
 class Backup:
     exclude_databases = ['information_schema', 'performance_schema', 'sys', 'mysql']
+    retry_count = 5
+    retry_errors = "Lost connection to MySQL server during query", "MySQL server has gone away"
     inline_sql = "FIELDS TERMINATED BY ';' OPTIONALLY ENCLOSED BY '\"' LINES TERMINATED BY '\\n'"
     nice = 'nice -n 15 ionice -c2 -n5'
     backup_dir = Path('/srv/backups')
@@ -33,6 +35,8 @@ class Backup:
     sunday_limit = 4
     mysql_config_file = Path("~/.my.cnf").expanduser()
     SecureFilePriv = Path('/home')
+    conn = None
+    cursor = None
 
     def __init__(self, **kwargs):
         self.rocksdb = kwargs.get('rocksdb')
@@ -51,9 +55,7 @@ class Backup:
             die("MySQL configuration not found")
 
     def __enter__(self):
-        self.conn = mysql.connector.connect(**self.db_config)
-        self.cursor = self.conn.cursor()
-        self.sql("SET SESSION wait_timeout = 28800")
+        self.connect_to_database()
         self.sql("SHOW VARIABLES like 'secure_file_priv'")
         mysql_secure_file_priv = self.cursor.fetchone()[1]
         if not mysql_secure_file_priv:
@@ -61,6 +63,11 @@ class Backup:
         if Path(mysql_secure_file_priv) != self.SecureFilePriv:
             die("set `secure_file_priv` in [backup] section of config file or use /home as default")
         return self
+
+    def connect_to_database(self):
+        self.conn = mysql.connector.connect(**self.db_config)
+        self.cursor = self.conn.cursor()
+        self.sql("SET SESSION wait_timeout = 28800")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.cursor:
@@ -72,7 +79,8 @@ class Backup:
         if not self.log:
             print(**kwargs)
 
-    def execute(self, command):
+    @staticmethod
+    def execute(command):
         logging.debug(f"Executing command: {command}")
         try:
             subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -80,13 +88,23 @@ class Backup:
             logging.critical(traceback.format_exc())
             die(f"Error running command '{command}': {e}")
 
-    def sql(self, query):
+    def sql(self, query, file_name=None, attempt=0):
         logging.debug(f'SQL: {query}')
         try:
             self.cursor.execute(query)
-        except mysql.connector.Error as err:
+        except (errors.OperationalError, errors.DatabaseError) as error:
+            if attempt < self.retry_count and any(msg in error for msg in self.retry_errors):
+                file_name and Path(file_name).unlink()
+                time.sleep(3)
+                logging.info("Reinitializing MySQL connection due to lost connection.")
+                if self.conn.is_connected():
+                    self.conn.close()
+                    self.connect_to_database()
+                return self.sql(query, attempt=attempt + 1)
+            die(error)
+        except mysql.connector.Error as error:
             logging.critical(f'\nSQL: {query}')
-            die(err)
+            die(error)
 
     def read_config_file(self):
         if self.config_file_path.is_file():
@@ -108,7 +126,7 @@ class Backup:
             if 'backup' in config:
                 backup = config['backup']
                 if 'exclude' in backup:
-                    self.exclude_databases = re.split('[,;\s]+', backup['exclude'])
+                    self.exclude_databases = re.split(r'[,;\s]+', backup['exclude'])
                 if 'nice' in backup:
                     self.nice = backup['nice']
                 if 'weekday_limit' in backup:
@@ -127,8 +145,9 @@ class Backup:
             message += f"\t{key}: {str(value)}"
         return message
 
-    def get_databases(self, exclude_dbs):
+    def get_databases(self, exclude_dbs=None):
         self.sql("SHOW DATABASES")
+        exclude_dbs = exclude_dbs or []
         # generate exclude patterns
         exclude_patterns = [f"^{pattern.replace('*', '.*')}$" if '*' in pattern else f"^{pattern}$" for pattern in exclude_dbs]
         return [db[0] for db in self.cursor if not any(re.match(pattern, db[0]) for pattern in exclude_patterns)]
@@ -138,7 +157,14 @@ class Backup:
         return self.cursor.fetchone()[0] > 0
 
     def process(self):
-        databases = self.db_names.split(',') if self.db_names else self.get_databases(self.exclude_databases)
+        if self.db_names:
+            all_database = self.get_databases()
+            databases = self.db_names.split(',')
+            missing_dbs = [db for db in databases if db not in all_database]
+            if missing_dbs:
+                die(f"Databases absent on database server: {','.join(missing_dbs)}")
+        else:
+            databases = self.get_databases(self.exclude_databases)
         for db_name in databases:
             try:
                 rocksdb = self.rocksdb or self.has_rocksdb_tables(db_name)
@@ -235,7 +261,7 @@ class Backup:
         ext = 'csv' if self.as_csv else 'data'
         sort = f'ORDER BY {primary_key}' if primary_key else ''
         sql_query = f"SELECT * INTO OUTFILE '{self.SecureFilePriv / db_name / f'{table_name}.{ext}'}' {sql} FROM `{db_name}`.`{table_name}` {sort}"
-        self.sql(sql_query)
+        self.sql(sql_query, file_name=f"{self.SecureFilePriv / db_name / f'{table_name}.{ext}'}")
 
     @staticmethod
     def separate_structure_and_indexes(create_stmt):
