@@ -61,7 +61,7 @@ class Backup:
 
     @staticmethod
     def change_engine(engine):
-        if engine and not engine.uppercase() in ['INNODB', 'ROCKSDB', 'ROCKSDB', 'Aria', 'MyISAM', 'MRG_MyISAM']:
+        if engine and not engine.upper() in ['INNODB', 'ROCKSDB', 'ROCKSDB', 'Aria', 'MyISAM', 'MRG_MyISAM']:
             print('Warning: engine not identified. Use it on your risk.')
         return engine
 
@@ -409,7 +409,7 @@ def main():
     parser.add_argument("-oft", "--one-file-per-table", help="make sql import file for each table", action="store_true")
     parser.add_argument("-ldl", "--load-data-last", help="put LOAD DATA at end of output sql file", action="store_true")
     parser.add_argument("--rocksdb", help="Export for RocksDB engine", action="store_true")
-    parser.add_argument("--engine", help="Replace ENGINE in output sql file", action="store_true")
+    parser.add_argument("--engine", help="Replace ENGINE in output sql file", default=None)
     parser.add_argument("--csv", help="Use csv format", action="store_true")
     parser.add_argument("--lock", help="use LOCK TABLE READ instead of transaction ", action="store_true")
     parser.add_argument("--debug", help="Debug mode", action="store_true")
