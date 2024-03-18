@@ -407,7 +407,7 @@ def main():
     parser.add_argument("-d", "--databases", help="Names of the databases to backup split by ','", default=None)
     parser.add_argument("-s", "--save", help="Path where backups would be saved, default '/srv/backups'", default=None)
     parser.add_argument("-oft", "--one-file-per-table", help="make sql import file for each table", action="store_true")
-    parser.add_argument("-ldl", "--load-data-last", help="put LOAD DATA at end of output sql file", action="store_true")
+    parser.add_argument("-ldl", "--load-data-last", help="put 'LOAD DATA' at end of output sql file", action="store_true")
     parser.add_argument("--rocksdb", help="Export for RocksDB engine", action="store_true")
     parser.add_argument("--engine", help="Replace ENGINE in output sql file", default=None)
     parser.add_argument("--csv", help="Use csv format", action="store_true")
