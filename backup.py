@@ -186,9 +186,8 @@ class Backup:
                 total = len(tables)
                 for index, table_name in enumerate(tables):
                     if index == 0 or self.oft:
-                        if self.oft:
-                            import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
-                            import_sql += f' USE `{db_name}`;\n'
+                        import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
+                        import_sql += f' USE `{db_name}`;\n'
                         if rocksdb:
                             import_sql += 'SET session sql_log_bin=0;\n'
                             import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
@@ -217,7 +216,7 @@ class Backup:
                         import_sql += f"\n{load_sql}\n"
                     if indexes:
                         import_sql += f'{indexes}\n'
-                    import_sql += f"ANALYZE NO_WRITE_TO_BINLOG TABLE '{table_file}';\n\n"
+                    import_sql += f"ANALYZE NO_WRITE_TO_BINLOG TABLE `{table_name}`;\n\n"
                     if index == (total - 1) or self.oft:
                         if self.ldl:
                             import_sql += "\n".join(after_lines) + "\n"
