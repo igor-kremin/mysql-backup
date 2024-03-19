@@ -79,6 +79,7 @@ class Backup:
         self.conn = mysql.connector.connect(**self.db_config)
         self.cursor = self.conn.cursor()
         self.sql("SET SESSION wait_timeout = 28800")
+        self.sql("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.cursor:
