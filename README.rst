@@ -2,7 +2,7 @@
 MySQL Backup Script
 =======
 
-This script provides an automated solution for backing up MySQL databases.
+This script provides an automated solution for backing up MySQL databases wich based on TEXT data.
 It supports
  - backup
  - compression,
