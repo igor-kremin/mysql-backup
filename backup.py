@@ -8,7 +8,6 @@ import configparser
 import logging
 import logging.handlers
 import mysql.connector
-import glob
 import os
 import pwd
 import grp
@@ -128,7 +127,7 @@ class Backup:
             if 'backup' in config:
                 backup = config['backup']
                 if 'exclude' in backup:
-                    self.exclude_databases = re.split(r'[,;\s]+', backup['exclude'])
+                    self.exclude_databases += re.split(r'[,;\s]+', backup['exclude'])
                 if 'nice' in backup:
                     self.nice = backup['nice']
                 if 'weekday_limit' in backup:
@@ -160,7 +159,7 @@ class Backup:
 
     def process(self):
         if self.db_names:
-            all_database = self.get_databases()
+            all_database = self.get_databases(exclude_dbs=self.exclude_databases)
             databases = self.db_names.split(',')
             missing_dbs = [db for db in databases if db not in all_database]
             if missing_dbs:
