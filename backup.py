@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-
 from datetime import datetime
 from pathlib import Path
 from mysql.connector import errors, errorcode
@@ -17,13 +16,21 @@ import subprocess
 import time
 import traceback
 
+SQL_RETRY_ATTEMPTS = 5
+SecureFilePriv = '/home'
+retry_errors = (
+    errorcode.CR_SERVER_LOST,
+    errorcode.CR_SERVER_GONE_ERROR,
+    errorcode.CR_CONNECTION_ERROR,
+    errorcode.CR_CONN_HOST_ERROR,
+    errorcode.ER_LOCK_WAIT_TIMEOUT,
+    errorcode.ER_QUERY_INTERRUPTED,
+)
+
 
 def die(message):
     logging.critical(message)
     raise ValueError(message)
-
-
-SecureFilePriv = '/home'
 
 
 class Backup:
@@ -32,6 +39,7 @@ class Backup:
     nice = 'nice -n 15 ionice -c2 -n5'
     backup_dir = Path('/srv/backups')
     db_config = {}
+    sql_retry_attempts = SQL_RETRY_ATTEMPTS
     weekday_limit = 10
     sunday_limit = 4
     mysql_config_file = Path("~/.my.cnf").expanduser()
@@ -46,7 +54,6 @@ class Backup:
         self.as_csv = kwargs.get('as_csv')
         self.db_names = kwargs.get('db_names')
         self.oft = kwargs.get('oft')
-        self.ldl = kwargs.get('ldl')
         self.log = kwargs.get('log')
         self.change_engine = self.change_engine(kwargs.get('change_engine'))
         self.config_file_path = Path(kwargs.get('config') or self.mysql_config_file)
@@ -101,10 +108,24 @@ class Backup:
 
     def sql(self, query):
         logging.debug(f'SQL: {query}')
+        self.cursor.execute(query)
+
+    def reconnect(self, attempt=0):
+        if self.conn:
+            try:
+                self.conn.close()
+            except Exception as e:
+                logging.warning(f'Error closing MySQL connection: {e}')
         try:
-            self.cursor.execute(query)
+            self.conn = mysql.connector.connect(**self.db_config)
+            self.cursor = self.conn.cursor()
         except mysql.connector.Error as error:
-            logging.critical(f'\nSQL: {query}')
+            if error.errno in retry_errors and attempt < self.sql_retry_attempts:
+                logging.warning(f'MySQL server error: {error}, attempting to reconnect: attempt {attempt + 1}')
+                time.sleep(2 ** attempt)
+                self.reconnect(attempt + 1)
+                return
+            logging.critical(f'Failed to reconnect to the MySQL server: {error}')
             die(error)
 
     def read_config_file(self):
@@ -138,6 +159,8 @@ class Backup:
                     self.backup_dir = Path(backup['path'])
                 if 'secure_file_priv' in backup:
                     self.SecureFilePriv = Path(backup['secure_file_priv'])
+                if 'sql_retry_attempts' in backup:
+                    self.sql_retry_attempts = int(backup['sql_retry_attempts'])
 
     def connection_settings(self):
         message = 'Connection settings: '
@@ -167,80 +190,94 @@ class Backup:
         else:
             databases = self.get_databases(self.exclude_databases)
         for db_name in databases:
+            table_names = self.get_tables(db_name)
+            if not table_names:
+                continue
+            if self.lock:
+                self.sql("LOCK TABLES " + ", ".join([f"`{table}` READ" for table in table_names]))
+            else:
+                self.sql("START TRANSACTION WITH CONSISTENT SNAPSHOT;")
+            self.process_db(db_name)
             try:
-                rocksdb = self.rocksdb or self.has_rocksdb_tables(db_name) and (not self.change_engine or self.change_engine.upper() == 'ROCKSDB')
-                if not self.log and not self.debug:
-                    print(f"Backing up database: {db_name} ".ljust(60, '.'), flush=True, end='')
-                else:
-                    logging.info(f"Backing up '{db_name}'")
-                start_time = time.time()
-
-                self.cleanup_output_folder(db_name)
-                tables = self.get_db_tables(db_name)
-                # backup database structure
-                tables_structures = {
-                    table_name: self.get_table_structure(db_name, table_name, rocksdb) for table_name in tables
-                }
-                import_sql = ''
-                after_lines = []
-                total = len(tables)
-                for index, table_name in enumerate(tables):
-                    if index == 0 or self.oft:
-                        import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
-                        import_sql += f' USE `{db_name}`;\n'
-                        if rocksdb:
-                            import_sql += 'SET session sql_log_bin=0;\n'
-                            import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
-                        if self.lock:
-                            self.sql("LOCK TABLES " + ", ".join([f"`{table}` READ" for table in tables_structures.keys()]))
-                        else:
-                            self.sql("START TRANSACTION WITH CONSISTENT SNAPSHOT;")
-                    structure, indexes, primary_key = tables_structures[table_name]
-                    if self.change_engine:
-                        structure = re.sub(r"ENGINE=\w+", f"ENGINE={self.change_engine}", structure)
-                    charset_pattern = r"CHARSET=(\w+)(?:\s+COLLATE=\w+)?"
-                    match = re.search(charset_pattern, structure)
-                    charset = ('CHARACTER SET %s' % match.group(1)) if match else ''
-                    import_sql += f' {table_name} '.center(60, '#') + '\n'
-                    import_sql += f'DROP TABLE IF EXISTS `{table_name}`;\n'
-                    import_sql += f'{structure};\n'
-                    self.export_table_data(db_name, table_name, primary_key)
-                    ext = 'csv' if self.as_csv else 'data'
-                    csv_sql = self.inline_sql if self.as_csv else ''
-                    sql = f'{charset} {csv_sql}'
-                    table_file = self.SecureFilePriv / db_name / f'{table_name}.{ext}'
-                    load_sql = f"LOAD DATA INFILE '{table_file}' INTO TABLE `{table_name}` {sql};"
-                    if self.ldl:
-                        after_lines.append(load_sql)
-                    else:
-                        import_sql += f"\n{load_sql}\n"
-                    if indexes:
-                        import_sql += f'{indexes}\n'
-                    import_sql += f"ANALYZE NO_WRITE_TO_BINLOG TABLE `{table_name}`;\n\n"
-                    if index == (total - 1) or self.oft:
-                        if self.ldl:
-                            import_sql += "\n".join(after_lines) + "\n"
-                        if rocksdb:
-                            import_sql += 'SET session rocksdb_bulk_load=0;\n'
-                        file_name = f"{db_name}_{table_name}" if self.oft else db_name
-                        with open(self.SecureFilePriv / f"{file_name}.sql", 'w') as file:
-                            file.write(import_sql)
-
-                duration = time.time() - start_time
-                if not self.log and not self.debug:
-                    print(f"\tok {duration:7.2f}s")
-                else:
-                    logging.info(f"Export duration: {duration:7.2f}s")
-                path = Path(self.path) if self.path else (self.backup_dir / self. get_suffix())
-                self.compress(path / f"{db_name}.tgz", db_name)
-                self.cleanup_output_folder(db_name)
-            except Exception as error:
-                logging.critical(traceback.format_exc())
-                die(error)
-            finally:
                 self.sql("UNLOCK TABLES;" if self.lock else "COMMIT;")
+            except:
+                pass
         if not self.path:
             self.clean_old_backups()
+
+    def get_tables(self, db_name):
+        self.sql(f"SHOW TABLES FROM `{db_name}`")
+        return [table[0] for table in self.cursor.fetchall()]
+
+    def process_db(self, db_name, attempt=0):
+        try:
+            rocksdb = self.rocksdb or self.has_rocksdb_tables(db_name) and (not self.change_engine or self.change_engine.upper() == 'ROCKSDB')
+            if not self.log and not self.debug:
+                print(f"Backing up database: {db_name} ".ljust(60, '.'), flush=True, end='')
+            else:
+                logging.info(f"Backing up '{db_name}'")
+            start_time = time.time()
+            self.cleanup_output_folder(db_name)
+            tables = self.get_db_tables(db_name)
+            # backup database structure
+            tables_structures = {
+                table_name: self.get_table_structure(db_name, table_name, rocksdb) for table_name in tables
+            }
+            import_sql = ''
+            total = len(tables)
+            for index, table_name in enumerate(tables):
+                if index == 0 or self.oft:
+                    import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
+                    import_sql += f' USE `{db_name}`;\n'
+                    if rocksdb:
+                        import_sql += 'SET session sql_log_bin=0;\n'
+                        import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
+                structure, indexes, primary_key = tables_structures[table_name]
+                if self.change_engine:
+                    structure = re.sub(r"ENGINE=\w+", f"ENGINE={self.change_engine}", structure)
+                charset_pattern = r"CHARSET=(\w+)(?:\s+COLLATE=\w+)?"
+                match = re.search(charset_pattern, structure)
+                charset = ('CHARACTER SET %s' % match.group(1)) if match else ''
+                import_sql += f' {table_name} '.center(60, '#') + '\n'
+                import_sql += f'DROP TABLE IF EXISTS `{table_name}`;\n'
+                import_sql += f'{structure};\n'
+                self.export_table_data(db_name, table_name, primary_key)
+                ext = 'csv' if self.as_csv else 'data'
+                csv_sql = self.inline_sql if self.as_csv else ''
+                sql = f'{charset} {csv_sql}'
+                table_file = self.SecureFilePriv / db_name / f'{table_name}.{ext}'
+                load_sql = f"LOAD DATA INFILE '{table_file}' INTO TABLE `{table_name}` {sql};"
+                import_sql += f"\n{load_sql}\n"
+                if indexes:
+                    import_sql += f'{indexes}\n'
+                import_sql += f"ANALYZE NO_WRITE_TO_BINLOG TABLE `{table_name}`;\n\n"
+                if index == (total - 1) or self.oft:
+                    if rocksdb:
+                        import_sql += 'SET session rocksdb_bulk_load=0;\n'
+                    file_name = f"{db_name}_{table_name}" if self.oft else db_name
+                    with open(self.SecureFilePriv / f"{file_name}.sql", 'w') as file:
+                        file.write(import_sql)
+
+            duration = time.time() - start_time
+            if not self.log and not self.debug:
+                print(f"\tok {duration:7.2f}s")
+            else:
+                logging.info(f"Export duration: {duration:7.2f}s")
+            path = Path(self.path) if self.path else (self.backup_dir / self. get_suffix())
+            self.compress(path / f"{db_name}.tgz", db_name)
+            self.cleanup_output_folder(db_name)
+        except mysql.connector.Error as error:
+            if error.errno in retry_errors and attempt < self.sql_retry_attempts:
+                logging.warning(f'MySQL server error: {error}, attempting to retry database:{db_name} (attempt {attempt + 1})')
+                # у випадку коли запит переривається при SELECT * INTO OUTFILE '<file_data_path>' видаляємо файл і перезапускаємо запит
+                time.sleep(2 ** attempt)
+                self.reconnect()
+                return self.process_db(db_name, attempt + 1)
+            logging.critical(f'Error during SQL query execution: {error}')
+            die(error)
+        except Exception as error:
+            logging.critical(traceback.format_exc())
+            die(error)
 
     def cleanup_output_folder(self, db_name):
         sql_file = (self.SecureFilePriv / f"{db_name}.sql")
@@ -284,7 +321,8 @@ class Backup:
         sql = self.inline_sql if self.as_csv else ''
         ext = 'csv' if self.as_csv else 'data'
         sort = f'ORDER BY {primary_key}' if primary_key else ''
-        sql_query = f"SELECT * INTO OUTFILE '{self.SecureFilePriv / db_name / f'{table_name}.{ext}'}' {sql} FROM `{db_name}`.`{table_name}` {sort}"
+        data_file = self.SecureFilePriv / db_name / f'{table_name}.{ext}'
+        sql_query = f"SELECT * INTO OUTFILE '{data_file}' {sql} FROM `{db_name}`.`{table_name}` {sort}"
         self.sql(sql_query)
 
     @staticmethod
@@ -406,11 +444,10 @@ def main():
     parser.add_argument("-d", "--databases", help="Names of the databases to backup split by ','", default=None)
     parser.add_argument("-s", "--save", help="Path where backups would be saved, default '/srv/backups'", default=None)
     parser.add_argument("-oft", "--one-file-per-table", help="make sql import file for each table", action="store_true")
-    parser.add_argument("-ldl", "--load-data-last", help="put 'LOAD DATA' at end of output sql file", action="store_true")
     parser.add_argument("--rocksdb", help="Export for RocksDB engine", action="store_true")
     parser.add_argument("--engine", help="Replace ENGINE in output sql file", default=None)
     parser.add_argument("--csv", help="Use csv format", action="store_true")
-    parser.add_argument("--lock", help="use LOCK TABLE READ instead of transaction ", action="store_true")
+    parser.add_argument("--lock", help="use LOCK TABLE READ instead of transaction (usefully for MyISAM)", action="store_true")
     parser.add_argument("--debug", help="Debug mode", action="store_true")
     parser.add_argument("-l", "--log", help="path to log file", default=None)
     args = parser.parse_args()
@@ -425,7 +462,6 @@ def main():
         'log': args.log,
         'change_engine': args.engine,
         'oft': args.one_file_per_table,
-        'ldl': args.load_data_last,
     }
     log_level = logging.DEBUG if args.debug else logging.INFO
     configure_logging(log_level, log_file=args.log)
