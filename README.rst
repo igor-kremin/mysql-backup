@@ -157,7 +157,6 @@ The script supports the following command line arguments:
 - ``--rocksdb``: Convert the <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
 - ``--csv``: Export table data in CSV format.
 - ``--lock``: Lock tables of the database during backup.
-- ``-ldl, --load-data-last``: put LOAD DATA at end of output sql file.
 - ``-oft, --one-file-per-table``: make sql import file for each table.
 - ``--engine``: change ENGINE string in output sql.
 - ``--debug``: Enable debug mode for detailed logging.
@@ -174,7 +173,7 @@ Usage
     backup.py --databases=mydatabase --config=/path/to/.my.cnf --rocksdb --csv
     backup.py --databases=mydatabase --config=/path/to/.my.cnf --rocksdb --csv
     backup.py --databases=mydatabase --engine InnoDB --oft
-    backup.py --databases=mydatabase --ldl
+    backup.py --databases=mydatabase --oft
     backup.py --debug
 
 Before first run
