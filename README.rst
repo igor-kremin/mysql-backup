@@ -4,14 +4,22 @@ MySQL Backup Script
 
 This script provides an automated solution for backing up MySQL databases wich based on TEXT data.
 It supports
- - **Enhanced Backup Flexibility**: The backup feature is designed to maximize compatibility and performance across different storage engines. By default, it separates the creation of indexes from the table creation process. This approach allows for more flexible and efficient data restoration, especially beneficial for engines like RocksDB.
- - **Automatic Data Compression**: After successfully backing up the databases, the script automatically compresses the output files using `tar -z`. This compression significantly reduces the storage space required for backups, making it easier to manage and transfer backup files. The use of `tar -z` ensures a widely compatible format that can be easily decompressed on any system.
- - **Selective Database Backup**: Tailor your backup process to your specific needs by selectively backing up only certain databases. Utilize the `-d` or `--databases` option to specify which databases to include in the backup. This feature is particularly useful for managing backups in environments with multiple databases, allowing you to focus on the most critical data and optimize storage usage.
- - **Ignore Tables by Mask**: Enhance your backup strategy by excluding specific tables based on naming patterns. The `-i` or `--ignore-table-mask` option allows you to define regex patterns to skip tables that match these criteria during the backup process. This capability is ideal for omitting temporary or less important tables, thereby streamlining the backup and reducing its size.
- - **Cleaning Up Old Backups**: To manage disk space efficiently, the script includes an automated cleanup feature that removes older backups beyond a configurable retention period. This ensures that your storage is not overwhelmed with outdated backup files, keeping your backup storage organized and within capacity limits.
- - **RocksDB Optimization**: To enhance the import performance for RocksDB, the script automatically wraps the import process with `SET session rocksdb_bulk_load=1` at the beginning and `SET session rocksdb_bulk_load=0` at the end. This enables efficient bulk loading by minimizing the number of flushes to disk, thus speeding up the import of large datasets.
- - **Flexible Export Formats**: Catering to diverse needs, the script supports exporting data in two formats: as CSV files for easy data manipulation and integration, or using MySQL's `OUTFILE` export files for a straightforward database restoration. This flexibility allows users to choose the format that best suits their post-backup processing needs.
- - **Lock Feature for MyISAM Tables**: By using the `--lock` flag, the script can lock MyISAM tables during the backup process to ensure data consistency without requiring a global read lock. This feature is particularly useful for databases using the MyISAM storage engine, providing a reliable backup without interrupting database operations.
+
+- **Enhanced Backup Flexibility**: The backup feature is designed to maximize compatibility and performance across different storage engines. By default, it separates the creation of indexes from the table creation process. This approach allows for more flexible and efficient data restoration, especially beneficial for engines like RocksDB.
+
+- **Automatic Data Compression**: After successfully backing up the databases, the script automatically compresses the output files using `tar -z`. This compression significantly reduces the storage space required for backups, making it easier to manage and transfer backup files. The use of `tar -z` ensures a widely compatible format that can be easily decompressed on any system.
+
+- **Selective Database Backup**: Tailor your backup process to your specific needs by selectively backing up only certain databases. Utilize the `-d` or `--databases` option to specify which databases to include in the backup. This feature is particularly useful for managing backups in environments with multiple databases, allowing you to focus on the most critical data and optimize storage usage.
+
+- **Ignore Tables by Mask**: Enhance your backup strategy by excluding specific tables based on naming patterns. The `-i` or `--ignore-table-mask` option allows you to define regex patterns to skip tables that match these criteria during the backup process. This capability is ideal for omitting temporary or less important tables, thereby streamlining the backup and reducing its size.
+
+- **Cleaning Up Old Backups**: To manage disk space efficiently, the script includes an automated cleanup feature that removes older backups beyond a configurable retention period. This ensures that your storage is not overwhelmed with outdated backup files, keeping your backup storage organized and within capacity limits.
+
+- **RocksDB Optimization**: To enhance the import performance for RocksDB, the script automatically wraps the import process with `SET session rocksdb_bulk_load=1` at the beginning and `SET session rocksdb_bulk_load=0` at the end. This enables efficient bulk loading by minimizing the number of flushes to disk, thus speeding up the import of large datasets.
+
+- **Flexible Export Formats**: Catering to diverse needs, the script supports exporting data in two formats: as CSV files for easy data manipulation and integration, or using MySQL's `OUTFILE` export files for a straightforward database restoration. This flexibility allows users to choose the format that best suits their post-backup processing needs.
+
+- **Lock Feature for MyISAM Tables**: By using the `--lock` flag, the script can lock MyISAM tables during the backup process to ensure data consistency without requiring a global read lock. This feature is particularly useful for databases using the MyISAM storage engine, providing a reliable backup without interrupting database operations.
 
 
 Installation
