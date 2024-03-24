@@ -7,7 +7,7 @@ It supports
 
 - **Enhanced Backup Flexibility**: The backup feature is designed to maximize compatibility and performance across different storage engines. By default, it separates the creation of indexes from the table creation process. This approach allows for more flexible and efficient data restoration, especially beneficial for engines like RocksDB.
 
-- **Automatic Data Compression**: After successfully backing up the databases, the script automatically compresses the output files using `tar -z`. This compression significantly reduces the storage space required for backups, making it easier to manage and transfer backup files. The use of `tar -z` ensures a widely compatible format that can be easily decompressed on any system.
+- **Automatic Data Compression**: After successfully backing up the databases, the script automatically compresses the output files using `tar` gzip. This compression significantly reduces the storage space required for backups, making it easier to manage and transfer backup files. 
 
 - **Selective Database Backup**: Tailor your backup process to your specific needs by selectively backing up only certain databases. Utilize the `-d` or `--databases` option to specify which databases to include in the backup. This feature is particularly useful for managing backups in environments with multiple databases, allowing you to focus on the most critical data and optimize storage usage.
 
@@ -55,6 +55,8 @@ Features
 - CSV format support for table data.
 - Debug mode for detailed operation logging.
 - Automated cleanup of old backups.
+- Easy Import of Backed-Up Data 
+
 
 Configuration
 -------------
@@ -212,8 +214,29 @@ You can run periodically script with help of crond:
     00 1  *  *  * root /usr/bin/flock -w 1 /var/lock/db-backup.lock -c 'echo `date`; time /usr/local/bin/backup -d database1, database2' &>>/var/log/db-backup.log
 
 
+Restoring data from a backup. 
+-----------------------------
+
+To restore data from a backup, simply extract the backup archive and import the SQL file into MySQL. 
+If the `secure_file_priv` setting differs from the one on the backup host, you can adjust it using `sed`. For example:
+
+.. code-block:: none
+
+    # Extract the backup archive to the specified directory
+    tar -xf /srv/day6/mydatabase.tgz -C /secure_file_priv/
+
+    # Adjust the path in the SQL file if necessary
+    sed -i 's|/old/secure_file_priv/path|/new/secure_file_priv/path|g' /secure_file_priv/mydatabase.sql
+
+    # Import the SQL file into MySQL
+    mysql < /secure_file_priv/mydatabase.sql
+
+
+If you need to extract to other database - just edit head of sql file to change the database name.
+
+
 Warning: Blocking Backup Operations
--------------------
+-----------------------------------
 The lock option in the MySQL Backup Script ensures data consistency during the backup of a database. It locks each table for reading before backup and releases it immediately after, thus preventing any modifications during the backup process.
 
 Data Consistency: Locks tables to prevent changes during the backup, ensuring a consistent data snapshot.
@@ -225,19 +248,4 @@ In summary, the lock option is a balance between maintaining data integrity and 
 Please be aware that during the backup process of a database, write operations to tables within that database will be temporarily suspended. This suspension is necessary to ensure data consistency and integrity of the backup.
 
 It's crucial to plan the backup during periods of low activity or outside of peak hours to minimize the impact on regular database operations.
-
-Warning: Non-Blocking Backup Operations
--------------------
-Please be aware that the backup script performs non-blocking operations. This means that the backup is executed without pausing or locking the entire database. While this approach ensures continuous access to the database during the backup process, it also has important implications, especially in environments with high transaction volumes or frequent data modifications.
-
-Data Inconsistency Risks: As the script backs up each table individually, other tables may be updated or changed during this process. This can lead to potential data inconsistencies in the backup. For instance, if Table A is backed up at time T1 and Table B is backed up later at time T2, any interrelated changes made to these tables between T1 and T2 will not be consistently reflected in the backup.
-
-Considerations for High-Volume Environments: In databases with high transaction volumes or frequent updates, consider the potential impact of these non-blocking backups. The backup script is well-suited for environments where data consistency requirements are not extremely strict, or where database changes are relatively infrequent.
-
-Alternative Strategies for Critical Data: For databases where data consistency is crucial (e.g., financial systems), you might need to explore alternative backup strategies. These might include database snapshots, point-in-time backups, or brief periods of read-only access to ensure data consistency.
-
-Regular Monitoring and Verification: Regularly monitor your backup processes and periodically verify the integrity and consistency of the backed-up data. This practice is essential to ensure that your backups meet your recovery objectives and data integrity requirements.
-
-By understanding these aspects of the backup script's operation, you can better align its use with your organization's data integrity policies and recovery objectives.
-
 
