@@ -479,7 +479,7 @@ def main():
     parser.add_argument("-nli", "--no-lazy-index", help="Keeps table schema and indexes creation together", action="store_true")
     parser.add_argument("--engine", help="Replace ENGINE in output sql file", default=None)
     parser.add_argument("-n", "--dry-run", help="Just show the databases that will be backed up", action="store_true")
-    parser.add_argument("-i", "--ignore-table-mask", help="Ignore tables matching the mask. Example: 'test_.*|.*_$'", default=None)
+    parser.add_argument("-i", "--ignore-table-mask", help="Ignore tables matching the mask. Example: '^test_|_$'", default=None)
     parser.add_argument("--csv", help="Use csv format", action="store_true")
     parser.add_argument("--lock", help="use LOCK TABLE READ instead of transaction (usefully for MyISAM)", action="store_true")
     parser.add_argument("--debug", help="Debug mode", action="store_true")
