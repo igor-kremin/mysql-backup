@@ -58,24 +58,36 @@ class Backup:
         self.oft = kwargs.get('oft')
         self.separate_index = not kwargs.get('nli')
         self.dry_run = kwargs.get('dry_run')
-        try:
-            self.ignore = re.compile(kwargs.get('ignore')) if kwargs.get('ignore') else None
-        except Exception as e:
-            die(f"Can no compile ignore patter:{e}")
+        self.ignore = self.set_regexp(kwargs.get('ignore'), 'ignore')
+        self.match = self.set_regexp(kwargs.get('match'), 'match')
         self.log = kwargs.get('log')
         self.engine = self.change_engine(kwargs.get('engine'))
-        self.path = kwargs.get('save')
-        if self.path and not Path(self.path).is_dir():
-            die(f"Folder {self.path} does not exist.")
+        self.output = self.test_directory(kwargs.get('output'))
+        self.path = '' if self.output else self.test_directory(kwargs.get('save'))
         logging.debug(self.connection_settings())
         if not self.db_config:
             die("MySQL configuration not found")
+
+    @staticmethod
+    def test_directory(path):
+        if path:
+            path = Path(path)
+            if not (path.is_dir() or path.parent.is_dir()):
+                die(f"Folder {path} does not exist.")
+            return path
 
     @staticmethod
     def change_engine(engine):
         if engine and not engine.upper() in ['INNODB', 'ROCKSDB', 'ROCKSDB', 'Aria', 'MyISAM', 'MRG_MyISAM']:
             print('Warning: engine not identified. Use it on your risk.')
         return engine
+
+    @staticmethod
+    def set_regexp(regexp, title):
+        try:
+            return re.compile(regexp) if regexp else None
+        except Exception as e:
+            die(f"Can no compile {title} pattern:{e}")
 
     def __enter__(self):
         self.connect_to_database()
@@ -175,11 +187,10 @@ class Backup:
                     self.oft = backup['rocksdb'].upper() in ('YES', 'ON')
                 if 'engine' in backup:
                     self.engine = backup['engine']
+                if 'match' in backup:
+                    self.match = self.set_regexp(backup['match'], 'match')
                 if 'ignore' in backup:
-                    try:
-                        self.ignore = re.compile(backup['ignore'])
-                    except Exception as e:
-                        die(f"Can no compile ignore patter:{e}")
+                    self.ignore = self.set_regexp(backup['ignore'], 'ignore')
 
     def connection_settings(self):
         message = 'Connection settings: '
@@ -212,44 +223,50 @@ class Backup:
             table_names = self.get_tables(db_name)
             if not table_names:
                 continue
-            if self.dry_run:
-                print(f"{db_name}")
-                continue
-            if self.lock:
+            if self.lock and not self.dry_run:
                 self.sql("LOCK TABLES " + ", ".join([f"`{table}` READ" for table in table_names]))
-            else:
+            elif not self.dry_run:
                 self.sql("START TRANSACTION WITH CONSISTENT SNAPSHOT;")
             self.process_db(db_name)
-            try:
-                if not self.dry_run:
-                    self.sql("UNLOCK TABLES;" if self.lock else "COMMIT;")
-            except:
-                pass
-        if not self.path:
+            if not self.dry_run:
+                self.sql("UNLOCK TABLES;" if self.lock else "COMMIT;")
+        if not self.output and not self.dry_run:
             self.clean_old_backups()
 
     def get_tables(self, db_name):
         self.sql(f"SHOW TABLES FROM `{db_name}`")
         return [table[0] for table in self.cursor.fetchall()]
 
+    def table_match(self, table_name):
+        if self.match:
+            return self.match.search(table_name)
+        elif self.ignore:
+            return not self.ignore.search(table_name)
+        return True
+
     def process_db(self, db_name, attempt=0):
         try:
+            start_time = time.time()
             rocksdb = self.rocksdb or self.has_rocksdb_tables(db_name) and (not self.engine or self.engine.upper() == 'ROCKSDB')
             if rocksdb and not self.separate_index:
                 logging.info('Ignoring `nli` argument as exports for RocksDB')
                 self.separate_index = True
-            if not self.log and not self.debug:
-                print(f"Backing up database: {db_name} ".ljust(60, '.'), flush=True, end='')
-            else:
-                logging.info(f"Backing up '{db_name}'")
-            start_time = time.time()
-            self.cleanup_output_folder(db_name)
+            if not self.dry_run:
+                if not self.log and not self.debug:
+                    print(f"Backing up database: {db_name} ".ljust(60, '.'), flush=True, end='')
+                else:
+                    logging.info(f"Backing up '{db_name}'")
+                self.cleanup_output_folder(db_name)
             # backup database structure
             tables_structures = {
                 table_name: self.get_table_structure(db_name, table_name, self.separate_index) for table_name in self.get_db_tables(db_name)
-                if not self.ignore or not self.ignore.search(table_name)
+                if self.table_match(table_name)
             }
+
             tables = tables_structures.keys()
+            if self.dry_run:
+                print(f"Would be backed up: {db_name} : {','.join(tables)}")
+                return
             import_sql = ''
             total = len(tables)
             for index, table_name in enumerate(tables):
@@ -260,7 +277,7 @@ class Backup:
                         import_sql += 'SET session sql_log_bin=0;\n'
                         import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
                 structure, indexes, primary_key = tables_structures[table_name]
-                if self.change_engine:
+                if self.engine:
                     structure = re.sub(r"ENGINE=\w+", f"ENGINE={self.engine}", structure)
                 charset_pattern = r"CHARSET=(\w+)(?:\s+COLLATE=\w+)?"
                 match = re.search(charset_pattern, structure)
@@ -294,8 +311,12 @@ class Backup:
                 print(f"\tok {duration:7.2f}s")
             else:
                 logging.info(f"Export duration: {duration:7.2f}s")
-            path = Path(self.path) if self.path else (self.backup_dir / self. get_suffix())
-            self.compress(path / f"{db_name}.tgz", db_name)
+            if self.output:
+                archive_name = Path(self.output)
+            else:
+                path = Path(self.path) if self.path else (self.backup_dir / self. get_suffix())
+                archive_name = path / f"{db_name}.tgz"
+            self.compress(archive_name, db_name)
             self.cleanup_output_folder(db_name)
         except mysql.connector.Error as error:
             if error.errno in retry_errors and attempt < self.sql_retry_attempts:
@@ -479,7 +500,9 @@ def main():
     parser.add_argument("-nli", "--no-lazy-index", help="Keeps table schema and indexes creation together", action="store_true")
     parser.add_argument("--engine", help="Replace ENGINE in output sql file", default=None)
     parser.add_argument("-n", "--dry-run", help="Just show the databases that will be backed up", action="store_true")
-    parser.add_argument("-i", "--ignore-table-mask", help="Ignore tables matching the mask. Example: '^test_|_$'", default=None)
+    parser.add_argument("-i", "--ignore", help="Ignore tables matching the mask. Example: '^test_|_$'", default=None)
+    parser.add_argument("-m", "--match", help="Only tables matching the mask. Example: '^account_|_user$'", default=None)
+    parser.add_argument("-o", "--output", help="Specify output file name", default=None)
     parser.add_argument("--csv", help="Use csv format", action="store_true")
     parser.add_argument("--lock", help="use LOCK TABLE READ instead of transaction (usefully for MyISAM)", action="store_true")
     parser.add_argument("--debug", help="Debug mode", action="store_true")
@@ -497,8 +520,10 @@ def main():
         'engine': args.engine,
         'oft': args.one_file_per_table,
         'nli': args.no_lazy_index,
-        'ignore': args.ignore_table_mask,
+        'ignore': args.ignore,
+        'match': args.match,
         'dry_run': args.dry_run,
+        'output': args.output,
     }
     log_level = logging.DEBUG if args.debug else logging.INFO
     configure_logging(log_level, log_file=args.log)
