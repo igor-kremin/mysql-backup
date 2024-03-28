@@ -170,7 +170,8 @@ The script supports the following command line arguments:
 - ``--rocksdb``: Convert the <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
 - ``--csv``: Export table data in CSV format.
 - ``--lock``: Lock tables of the database during backup.
-- ``-i, --ignore-table-mask``: Ignore tables matching the mask. Example: '^test_.*|_$'.
+- ``-i, --ignore``: Ignore tables matching the mask. Example: '^test_.*|_$'.
+- ``-m, --match``: Only tables matching the mask. Example: '&account.*|_user$'.
 - ``-oft, --one-file-per-table``: make sql import file for each table.
 - ``-nli, --no-lazy-index``: Keeps table schema and indexes creation together.
 - ``--engine``: change ENGINE string in output sql.
@@ -190,7 +191,8 @@ Usage
     backup.py --databases=mydatabase --config=/path/to/.my.cnf --engine InnoDB
     backup.py --databases=mydatabase --engine InnoDB --oft
     backup.py -d mydatabase --oft
-    backup.py -d mydatabase --engine InnoDB --ignore-table-mask '_$'
+    backup.py -d mydatabase --engine InnoDB --ignore '_$'
+    backup.py -d mydatabase --engine InnoDB --match '^product'
     backup.py --debug
 
 Before first run
