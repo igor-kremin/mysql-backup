@@ -52,14 +52,14 @@ class Backup:
         self.read_config_file()
         self.rocksdb = kwargs.get('rocksdb')
         self.debug = kwargs.get('debug')
-        self.lock = kwargs.get('lock')
         self.as_csv = kwargs.get('as_csv')
         self.db_names = kwargs.get('db_names')
         self.oft = kwargs.get('oft')
+        self.fast = kwargs.get('fast')
         self.separate_index = not kwargs.get('nli')
         self.dry_run = kwargs.get('dry_run')
-        self.ignore = self.set_regexp(kwargs.get('ignore'), 'ignore')
-        self.match = self.set_regexp(kwargs.get('match'), 'match')
+        self.exclude = self.set_regexp(kwargs.get('exclude'), 'exclude')
+        self.include = self.set_regexp(kwargs.get('include'), 'include')
         self.log = kwargs.get('log')
         self.engine = self.change_engine(kwargs.get('engine'))
         self.output = self.test_directory(kwargs.get('output'))
@@ -179,6 +179,8 @@ class Backup:
                     self.SecureFilePriv = Path(backup['secure_file_priv'])
                 if 'sql_retry_attempts' in backup:
                     self.sql_retry_attempts = int(backup['sql_retry_attempts'])
+                if 'fast' in backup:
+                    self.fast = not backup['fast'].upper() in ('YES', 'ON')
                 if 'nli' in backup:
                     self.separate_index = not backup['nli'].upper() in ('YES', 'ON')
                 if 'oft' in backup:
@@ -187,10 +189,10 @@ class Backup:
                     self.oft = backup['rocksdb'].upper() in ('YES', 'ON')
                 if 'engine' in backup:
                     self.engine = backup['engine']
-                if 'match' in backup:
-                    self.match = self.set_regexp(backup['match'], 'match')
-                if 'ignore' in backup:
-                    self.ignore = self.set_regexp(backup['ignore'], 'ignore')
+                if 'include' in backup:
+                    self.include = self.set_regexp(backup['include'], 'include')
+                if 'exclude' in backup:
+                    self.exclude = self.set_regexp(backup['exclude'], 'exclude')
 
     def connection_settings(self):
         message = 'Connection settings: '
@@ -223,13 +225,7 @@ class Backup:
             table_names = self.get_tables(db_name)
             if not table_names:
                 continue
-            if self.lock and not self.dry_run:
-                self.sql("LOCK TABLES " + ", ".join([f"`{table}` READ" for table in table_names]))
-            elif not self.dry_run:
-                self.sql("START TRANSACTION WITH CONSISTENT SNAPSHOT;")
             self.process_db(db_name)
-            if not self.dry_run:
-                self.sql("UNLOCK TABLES;" if self.lock else "COMMIT;")
         if not self.output and not self.dry_run:
             self.clean_old_backups()
 
@@ -238,10 +234,10 @@ class Backup:
         return [table[0] for table in self.cursor.fetchall()]
 
     def table_match(self, table_name):
-        if self.match:
-            return self.match.search(table_name)
-        elif self.ignore:
-            return not self.ignore.search(table_name)
+        if self.include:
+            return self.include.search(table_name)
+        elif self.exclude:
+            return not self.exclude.search(table_name)
         return True
 
     def process_db(self, db_name, attempt=0):
@@ -259,20 +255,23 @@ class Backup:
                 self.cleanup_output_folder(db_name)
             # backup database structure
             tables_structures = {
-                table_name: self.get_table_structure(db_name, table_name, self.separate_index) for table_name in self.get_db_tables(db_name)
-                if self.table_match(table_name)
+                table_name: self.get_table_structure(db_name, table_name, self.separate_index, rocksdb)
+                for table_name in self.get_db_tables(db_name) if self.table_match(table_name)
             }
-
             tables = tables_structures.keys()
             if self.dry_run:
                 print(f"Would be backed up: {db_name} : {','.join(tables)}")
                 return
+            self.sql("START TRANSACTION WITH CONSISTENT SNAPSHOT;")
             import_sql = ''
+            index_sql = ''
+            load_data_sql = ''
+            files = [f"{db_name}.sql"]
             total = len(tables)
             for index, table_name in enumerate(tables):
                 if index == 0 or self.oft:
                     import_sql = f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
-                    import_sql += f' USE `{db_name}`;\n'
+                    import_sql += f'USE `{db_name}`;\n'
                     if rocksdb:
                         import_sql += 'SET session sql_log_bin=0;\n'
                         import_sql += 'SET session rocksdb_bulk_load=1;\n\n'
@@ -291,21 +290,42 @@ class Backup:
                 sql = f'{charset} {csv_sql}'
                 table_file = self.SecureFilePriv / db_name / f'{table_name}.{ext}'
                 load_sql = f"LOAD DATA INFILE '{table_file}' INTO TABLE `{table_name}` {sql};"
-                import_sql += f"\n{load_sql}\n"
+                if self.fast:
+                    load_data_sql += f"{load_sql}\n"
+                else:
+                    import_sql += f"\n{load_sql}\n"
                 if indexes:
-                    import_sql += f'{indexes}\n'
+                    if self.fast:
+                        index_sql += f'{indexes}\n'
+                    else:
+                        import_sql += f'{indexes}\n'
                 if index == (total - 1) or self.oft:
                     if rocksdb:
                         import_sql += 'SET session rocksdb_bulk_load=0;\n'
+                    file_name = f"{db_name}_{table_name}" if self.oft else db_name
+                    sql_file = f"{file_name}.sql"
                     if self.oft:
                         import_sql += f"\nANALYZE NO_WRITE_TO_BINLOG TABLE `{table_name}`;\n\n"
                     else:
                         tables_str = ','.join(f"`{t}`" for t in tables)
-                        import_sql += f"\nANALYZE NO_WRITE_TO_BINLOG TABLE {tables_str};\n\n"
-                    file_name = f"{db_name}_{table_name}" if self.oft else db_name
-                    with open(self.SecureFilePriv / f"{file_name}.sql", 'w') as file:
+                        analyze_sql = f"\nANALYZE NO_WRITE_TO_BINLOG TABLE {tables_str};\n\n"
+                        if self.fast:
+                            sql_file = f"1.{file_name}_structure.sql"
+                            load_sql_file = f"2.{file_name}_load.sql"
+                            with open(self.SecureFilePriv / load_sql_file, 'w') as file:
+                                file.write(load_data_sql)
+                            index_sql_file = f"3.{file_name}_index.sql"
+                            with open(self.SecureFilePriv / index_sql_file, 'w') as file:
+                                file.write(index_sql)
+                            analyze_sql_file = f"4.{file_name}_analyze.sql"
+                            with open(self.SecureFilePriv / analyze_sql_file, 'w') as file:
+                                file.write(analyze_sql)
+                            files = [sql_file, load_sql_file, index_sql_file, analyze_sql_file]
+                        else:
+                            import_sql += analyze_sql
+                    with open(self.SecureFilePriv / sql_file, 'w') as file:
                         file.write(import_sql)
-
+            self.sql("COMMIT;")
             duration = time.time() - start_time
             if not self.log and not self.debug:
                 print(f"\tok {duration:7.2f}s")
@@ -316,12 +336,14 @@ class Backup:
             else:
                 path = Path(self.path) if self.path else (self.backup_dir / self. get_suffix())
                 archive_name = path / f"{db_name}.tgz"
-            self.compress(archive_name, db_name)
+            if self.oft:
+                files = [f"{db_name}_{table}.sql" for table in tables]
+            self.compress(archive_name, db_name, ' '.join(map(str, files)))
             self.cleanup_output_folder(db_name)
         except mysql.connector.Error as error:
             if error.errno in retry_errors and attempt < self.sql_retry_attempts:
                 logging.warning(f'MySQL server error: {error}, attempting to retry database:{db_name} (attempt {attempt + 1})')
-                # у випадку коли запит переривається при SELECT * INTO OUTFILE '<file_data_path>' видаляємо файл і перезапускаємо запит
+                # у випадку коли запит переривається при SELECT * INTO OUTFILE '<file_data_path>' перезапускаємо архівування бази
                 time.sleep(2 ** attempt)
                 self.reconnect()
                 return self.process_db(db_name, attempt + 1)
@@ -344,20 +366,20 @@ class Backup:
         if sql_file.exists():
             logging.debug(f'Removing {sql_file}')
             sql_file.unlink()
-        archive_folder = self.SecureFilePriv / db_name
-        if archive_folder.exists():
-            shutil.rmtree(archive_folder)
+        output_folder = self.SecureFilePriv / db_name
+        if output_folder.exists():
+            shutil.rmtree(output_folder)
 
     def get_db_tables(self, db_name):
         self.sql(f"SHOW TABLES FROM `{db_name}`")
         return [t[0] for t in self.cursor.fetchall()]
 
-    def get_table_structure(self, db_name, table_name, separate_indexes):
+    def get_table_structure(self, db_name, table_name, separate_indexes, rocksdb):
         self.sql(f"SHOW CREATE TABLE `{db_name}`.`{table_name}`")
         create_table_stmt = self.cursor.fetchone()[1]
         if separate_indexes:
             # Розділяємо CREATE TABLE на структуру та індекси
-            structure_part, indexes_part, primary_key = self.separate_structure_and_indexes(create_table_stmt)
+            structure_part, indexes_part, primary_key = self.separate_structure_and_indexes(create_table_stmt, rocksdb)
             return structure_part, indexes_part, primary_key
         return create_table_stmt, None, None
 
@@ -378,7 +400,7 @@ class Backup:
         self.sql(sql_query)
 
     @staticmethod
-    def separate_structure_and_indexes(create_stmt):
+    def separate_structure_and_indexes(create_stmt, rocksdb=False):
         # Витягуємо назву таблиці, її структуру і індекси
         match = re.search(r'CREATE TABLE `(\w+)`\s*\((.*)\)\s*(ENGINE=[^\n]+)(.*?(/\*.*?\*/))?', create_stmt, re.DOTALL)
         if not match:
@@ -406,7 +428,7 @@ class Backup:
         fields = ",\n  ".join(structure_fields)
         structure_part = f"CREATE TABLE `{table_name}` (\n{fields}\n) {table_settings}"
         indexes_part = "\n".join([f"ALTER TABLE `{table_name}` ADD {index};" for index in indexes])
-        if allow_unsorted:
+        if allow_unsorted and rocksdb:
             index_str = (',\n' + ',\n'.join(indexes) + ')\n') if indexes else '\n'
             return f"""
                 SET session rocksdb_bulk_load_allow_unsorted=1;
@@ -450,7 +472,7 @@ class Backup:
             logging.debug(f"Removing folder: {dir_to_remove}")
             shutil.rmtree(dir_to_remove)
 
-    def compress(self, file_name, db_name):
+    def compress(self, file_name, db_name, sql_files):
         backup_dir = file_name.parent
         start_time = time.time()
         today_date = datetime.now().strftime("%Y%m%d")
@@ -466,8 +488,7 @@ class Backup:
             print(f"Compressing {file_name} ".ljust(60, '.'), flush=True, end='')
         else:
             logging.info(f"Compressing {file_name}")
-        file_mask = f"{db_name}_*.sql" if self.oft else f"{db_name}.sql"
-        command = f'{self.nice} tar -chzf {file_name} -C {self.SecureFilePriv} {db_name} {file_mask}'
+        command = f'{self.nice} tar -chzf {file_name} -C {self.SecureFilePriv} {db_name} {sql_files}'
         self.execute(command)
         duration = time.time() - start_time
         if not self.log and not self.debug:
@@ -500,17 +521,17 @@ def main():
     parser.add_argument("-nli", "--no-lazy-index", help="Keeps table schema and indexes creation together", action="store_true")
     parser.add_argument("--engine", help="Replace ENGINE in output sql file", default=None)
     parser.add_argument("-n", "--dry-run", help="Just show the databases that will be backed up", action="store_true")
-    parser.add_argument("-i", "--ignore", help="Ignore tables matching the mask. Example: '^test_|_$'", default=None)
-    parser.add_argument("-m", "--match", help="Only tables matching the mask. Example: '^account_|_user$'", default=None)
+    parser.add_argument("-e", "--exclude", help="Ignore tables matching the mask. Example: '^test_|_$'", default=None)
+    parser.add_argument("-i", "--include", help="Only tables matching the mask. Example: '^account_|_user$'", default=None)
     parser.add_argument("-o", "--output", help="Specify output file name", default=None)
+    parser.add_argument("-f", "--fast", help="Fast import: Fast sql import: first the tables are created, "
+                                             "then the data is loaded, after which the indexes are created", action="store_true")
     parser.add_argument("--csv", help="Use csv format", action="store_true")
-    parser.add_argument("--lock", help="use LOCK TABLE READ instead of transaction (usefully for MyISAM)", action="store_true")
     parser.add_argument("--debug", help="Debug mode", action="store_true")
     parser.add_argument("-l", "--log", help="path to log file", default=None)
     args = parser.parse_args()
     kwargs = {
         'as_csv': args.csv,
-        'lock': args.lock,
         'debug': args.debug,
         'rocksdb': args.rocksdb,
         'config_file': args.config,
@@ -520,13 +541,16 @@ def main():
         'engine': args.engine,
         'oft': args.one_file_per_table,
         'nli': args.no_lazy_index,
-        'ignore': args.ignore,
-        'match': args.match,
+        'include': args.include,
+        'exclude': args.exclude,
+        'fast': args.fast,
         'dry_run': args.dry_run,
         'output': args.output,
     }
     log_level = logging.DEBUG if args.debug else logging.INFO
     configure_logging(log_level, log_file=args.log)
+    if args.one_file_per_table and args.fast:
+        die("--one-file-per-table and --fast can`t be combined")
     with Backup(**kwargs) as backup:
         try:
             backup.process()
