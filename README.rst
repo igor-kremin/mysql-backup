@@ -19,9 +19,6 @@ It supports
 
 - **Flexible Export Formats**: Catering to diverse needs, the script supports exporting data in two formats: as CSV files for easy data manipulation and integration, or using MySQL's `OUTFILE` export files for a straightforward database restoration. This flexibility allows users to choose the format that best suits their post-backup processing needs.
 
-- **Lock Feature for MyISAM Tables**: By using the `--lock` flag, the script can lock MyISAM tables during the backup process to ensure data consistency without requiring a global read lock. This feature is particularly useful for databases using the MyISAM storage engine, providing a reliable backup without interrupting database operations.
-
-
 Installation
 ------------
 
@@ -169,11 +166,11 @@ The script supports the following command line arguments:
 - ``-s, --save``: Path where backups would be saved, default '/srv/backups'.
 - ``--rocksdb``: Convert the <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
 - ``--csv``: Export table data in CSV format.
-- ``--lock``: Lock tables of the database during backup.
-- ``-i, --ignore``: Ignore tables matching the mask. Example: '^test_.*|_$'.
-- ``-m, --match``: Only tables matching the mask. Example: '&account.*|_user$'.
+- ``-e, --exclude``: Ignore tables matching the mask. Example: '^test_.*|_$'.
+- ``-i, --include``: Only tables matching the mask. Example: '&account.*|_user$'.
 - ``-oft, --one-file-per-table``: make sql import file for each table.
 - ``-nli, --no-lazy-index``: Keeps table schema and indexes creation together.
+- ``-f, --fast``: For fast import: creates four sql files structure, load, index, analyze.
 - ``--engine``: change ENGINE string in output sql.
 - ``--debug``: Enable debug mode for detailed logging.
 - ``-l, --log``: Path to log file.
@@ -191,8 +188,8 @@ Usage
     backup.py --databases=mydatabase --config=/path/to/.my.cnf --engine InnoDB
     backup.py --databases=mydatabase --engine InnoDB --oft
     backup.py -d mydatabase --oft
-    backup.py -d mydatabase --engine InnoDB --ignore '_$'
-    backup.py -d mydatabase --engine InnoDB --match '^product'
+    backup.py -d mydatabase --engine InnoDB --include '_$'
+    backup.py -d mydatabase --engine InnoDB --exclude '^product'
     backup.py --debug
 
 Before first run
@@ -235,19 +232,3 @@ If the `secure_file_priv` setting differs from the one on the backup host, you c
 
 
 If you need to extract to other database - just edit head of sql file to change the database name.
-
-
-Warning: Blocking Backup Operations
------------------------------------
-The lock option in the MySQL Backup Script ensures data consistency during the backup of a database. It locks each table for reading before backup and releases it immediately after, thus preventing any modifications during the backup process.
-
-Data Consistency: Locks tables to prevent changes during the backup, ensuring a consistent data snapshot.
-
-Selective Locking: Locks are applied only to the tables of the specified database, reducing the overall impact on the database server.
-
-In summary, the lock option is a balance between maintaining data integrity and minimizing operational impact during backups. It's recommended to use it during low-activity periods for the best efficiency.
-
-Please be aware that during the backup process of a database, write operations to tables within that database will be temporarily suspended. This suspension is necessary to ensure data consistency and integrity of the backup.
-
-It's crucial to plan the backup during periods of low activity or outside of peak hours to minimize the impact on regular database operations.
-
