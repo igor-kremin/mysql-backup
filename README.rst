@@ -166,6 +166,7 @@ The script supports the following command line arguments:
 - ``-s, --save``: Path where backups would be saved, default '/srv/backups'.
 - ``--rocksdb``: Convert the <exported>.sql file to be allowed to be imported into the RocksDB engine during backup.
 - ``--csv``: Export table data in CSV format.
+- ``--ignore``: : Ignore databases. Example: 'tmp,test*'.
 - ``-e, --exclude``: Ignore tables matching the mask. Example: '^test_.*|_$'.
 - ``-i, --include``: Only tables matching the mask. Example: '&account.*|_user$'.
 - ``-oft, --one-file-per-table``: make sql import file for each table.
@@ -183,7 +184,6 @@ Usage
     backup.py
     backup.py --databases=mydatabase1,mydatabase2
     backup.py --databases=mydatabase --config=/path/to/.my.cnf
-    backup.py --databases=mydatabase --config=/path/to/.my.cnf --rocksdb
     backup.py --databases=mydatabase --config=/path/to/.my.cnf --rocksdb --csv
     backup.py --databases=mydatabase --config=/path/to/.my.cnf --engine InnoDB
     backup.py --databases=mydatabase --engine InnoDB --oft
