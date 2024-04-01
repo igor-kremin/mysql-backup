@@ -34,7 +34,7 @@ def die(message):
 
 
 class Backup:
-    exclude_databases = ['information_schema', 'performance_schema', 'sys', 'mysql']
+    ignore_databases = ['information_schema', 'performance_schema', 'sys', 'mysql']
     inline_sql = "FIELDS TERMINATED BY ';' OPTIONALLY ENCLOSED BY '\"' LINES TERMINATED BY '\\n'"
     nice = 'nice -n 15 ionice -c2 -n5'
     backup_dir = Path('/srv/backups')
@@ -165,8 +165,8 @@ class Backup:
                     self.db_config['port'] = client['port']
             if 'backup' in config:
                 backup = config['backup']
-                if 'exclude' in backup:
-                    self.exclude_databases += re.split(r'[,;\s]+', backup['exclude'])
+                if 'ignore' in backup:
+                    self.ignore_databases += re.split(r'[,;\s]+', backup['ignore'])
                 if 'nice' in backup:
                     self.nice = backup['nice']
                 if 'weekday_limit' in backup:
@@ -190,9 +190,9 @@ class Backup:
                 if 'engine' in backup:
                     self.engine = backup['engine']
                 if 'include' in backup:
-                    self.include = self.set_regexp(backup['include'], 'include')
+                    self.include = self.set_regexp(backup['include'].strip("'\""), 'include')
                 if 'exclude' in backup:
-                    self.exclude = self.set_regexp(backup['exclude'], 'exclude')
+                    self.exclude = self.set_regexp(backup['exclude'].strip("'\""), 'exclude')
 
     def connection_settings(self):
         message = 'Connection settings: '
@@ -214,13 +214,13 @@ class Backup:
 
     def process(self):
         if self.db_names:
-            all_database = self.get_databases(exclude_dbs=self.exclude_databases)
+            all_database = self.get_databases(exclude_dbs=self.ignore_databases)
             databases = self.db_names.split(',')
             missing_dbs = [db for db in databases if db not in all_database]
             if missing_dbs:
                 die(f"Databases absent on database server: {','.join(missing_dbs)}")
         else:
-            databases = self.get_databases(self.exclude_databases)
+            databases = self.get_databases(self.ignore_databases)
         for db_name in databases:
             table_names = self.get_tables(db_name)
             if not table_names:
@@ -517,15 +517,15 @@ def main():
     parser.add_argument("-d", "--databases", help="Names of the databases to backup split by ','", default=None)
     parser.add_argument("-s", "--save", help="Path where backups would be saved, default '/srv/backups'", default=None)
     parser.add_argument("-oft", "--one-file-per-table", help="make sql import file for each table", action="store_true")
-    parser.add_argument("--rocksdb", help="Export for RocksDB engine", action="store_true")
     parser.add_argument("-nli", "--no-lazy-index", help="Keeps table schema and indexes creation together", action="store_true")
     parser.add_argument("--engine", help="Replace ENGINE in output sql file", default=None)
-    parser.add_argument("-n", "--dry-run", help="Just show the databases that will be backed up", action="store_true")
+    parser.add_argument("--ignore", help="Ignore databases. Example: 'tmp,test*'", default=None)
+    parser.add_argument("--rocksdb", help="Export for RocksDB engine", action="store_true")
     parser.add_argument("-e", "--exclude", help="Ignore tables matching the mask. Example: '^test_|_$'", default=None)
     parser.add_argument("-i", "--include", help="Only tables matching the mask. Example: '^account_|_user$'", default=None)
     parser.add_argument("-o", "--output", help="Specify output file name", default=None)
-    parser.add_argument("-f", "--fast", help="Fast import: Fast sql import: first the tables are created, "
-                                             "then the data is loaded, after which the indexes are created", action="store_true")
+    parser.add_argument("-f", "--fast", help="For fast import: creates four sql files structure, load, index, analyze", action="store_true")
+    parser.add_argument("-n", "--dry-run", help="Just show the databases that will be backed up", action="store_true")
     parser.add_argument("--csv", help="Use csv format", action="store_true")
     parser.add_argument("--debug", help="Debug mode", action="store_true")
     parser.add_argument("-l", "--log", help="path to log file", default=None)
@@ -541,6 +541,7 @@ def main():
         'engine': args.engine,
         'oft': args.one_file_per_table,
         'nli': args.no_lazy_index,
+        'ignore': args.ignore,
         'include': args.include,
         'exclude': args.exclude,
         'fast': args.fast,
