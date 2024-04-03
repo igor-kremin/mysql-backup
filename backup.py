@@ -354,15 +354,19 @@ class Backup:
             die(error)
 
     def cleanup_output_folder(self, db_name):
-        sql_file = (self.SecureFilePriv / f"{db_name}.sql")
+        sql_file = self.SecureFilePriv / f"{db_name}.sql"
+        files = [self.SecureFilePriv / f"{db_name}.sql"]
         if self.oft:
-            for file_path in self.SecureFilePriv.glob(f"{db_name}_*.sql"):
-                try:
-                    file_path.unlink()
-                except Exception as e:
-                    print(f"Error deleting file {file_path}: {e}")
-        else:
-            sql_file = (self.SecureFilePriv / f"{db_name}.sql")
+            files = self.SecureFilePriv.glob(f"{db_name}_*.sql")
+        elif self.fast:
+            files = (f"1.{db_name}_structure.sql", f"2.{db_name}_load.sql", f"3.{db_name}_index.sql", f"4.{db_name}_analyze.sql")
+        for file_path in files:
+            try:
+                sql_file = Path(file_path)
+                sql_file.exists() and Path(file_path).unlink()
+            except Exception as e:
+                print(f"Error deleting file {file_path}: {e}")
+
         if sql_file.exists():
             logging.debug(f'Removing {sql_file}')
             sql_file.unlink()
