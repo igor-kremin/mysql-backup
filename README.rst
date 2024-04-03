@@ -249,8 +249,8 @@ CentOS/RHEL/RockyLinux:
    sudo yum install parallel
 
 
-1. mysql -u user_name -p < 1.db_name_structure.sql;
-2. cat 2.db_name_load.sql | parallel --will-cite -I% mysql -u user_name -p -D db_name -e "%"
-3. cat 3.db_name_index.sql | parallel --will-cite -I% mysql -u user_name -p -D db_name -e "%"
-4. mysql -u user_name -p < 4.db_name_analyze.sql
+1. mysql -u user_name -ppassword < 1.db_name_structure.sql;
+2. cat 2.db_name_load.sql | parallel --will-cite -I% mysql -u user_name -ppassword -D db_name -e "%"
+3. cat 3.db_name_index.sql | parallel --will-cite -I% mysql -u user_name -ppassword -D db_name -e "%"
+4. mysql -u user_name -ppassword < 4.db_name_analyze.sql
 
