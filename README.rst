@@ -228,7 +228,29 @@ If the `secure_file_priv` setting differs from the one on the backup host, you c
     sed -i 's|/old/secure_file_priv/path|/new/secure_file_priv/path|g' /secure_file_priv/mydatabase.sql
 
     # Import the SQL file into MySQL
-    mysql < /secure_file_priv/mydatabase.sql
-
+    mysql -u user_name -p < /secure_file_priv/mydatabase.sql
 
 If you need to extract to other database - just edit head of sql file to change the database name.
+
+Restoring data from a backup if fast option selected. 
+-----------------------------------------------------
+To import data parallely, you will need to install package parallel 
+
+Debian/Ubuntu: sudo apt-get install parallel
+
+.. code-block:: none
+
+   sudo apt-get install parallel
+
+CentOS/RHEL/RockyLinux: 
+
+.. code-block:: none
+
+   sudo yum install parallel
+
+
+1. mysql -u user_name -p < 1.db_name_structure.sql;
+2. cat 2.db_name_load.sql | parallel --will-cite -I% mysql -u user_name -p -D db_name -e "%"
+3. cat 3.db_name_index.sql | parallel --will-cite -I% mysql -u user_name -p -D db_name -e "%"
+4. mysql -u user_name -p < 4.db_name_analyze.sql
+
