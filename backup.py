@@ -243,7 +243,7 @@ class Backup:
     def process_db(self, db_name, attempt=0):
         try:
             start_time = time.time()
-            rocksdb = self.rocksdb or self.has_rocksdb_tables(db_name) and (not self.engine or self.engine.upper() == 'ROCKSDB')
+            rocksdb = self.rocksdb or self.has_rocksdb_tables(db_name) and self.engine.upper() == 'ROCKSDB'
             if rocksdb and not self.separate_index:
                 logging.info('Ignoring `nli` argument as exports for RocksDB')
                 self.separate_index = True
@@ -421,7 +421,8 @@ class Backup:
         structure_fields = [field.strip() for field in fields_and_indexes if not re.match(r'KEY|INDEX|UNIQUE', field)]
         indexes = [field.strip() for field in fields_and_indexes if re.match(r'KEY|INDEX|UNIQUE', field) and 'PRIMARY KEY' not in field]
         allow_unsorted = False
-        table_settings = re.sub(r'ENGINE=\w+', f'ENGINE=ROCKSDB', table_settings)
+        if rocksdb:
+            table_settings = re.sub(r'ENGINE=\w+', f'ENGINE=ROCKSDB', table_settings)
         if comment and 'PARTITION BY KEY' in comment:
             auto_increment_field = [field.split()[0].strip('`') for field in structure_fields if "AUTO_INCREMENT" in field]
             if auto_increment_field and not any(filter(lambda x: 'PRIMARY KEY' in x, structure_fields)):
