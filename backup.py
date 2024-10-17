@@ -406,9 +406,9 @@ class Backup:
     @staticmethod
     def separate_structure_and_indexes(create_stmt, rocksdb=False):
         # Витягуємо назву таблиці, її структуру і індекси
-        match = re.search(r'CREATE TABLE `(\w+)`\s*\((.*)\)\s*(ENGINE=[^\n]+)(.*?(/\*.*?\*/))?', create_stmt, re.DOTALL)
+        match = re.search(r'CREATE TABLE `([\w-]+)`\s*\((.*)\)\s*(ENGINE=[^\n]+)(.*?(/\*.*?\*/))?', create_stmt, re.DOTALL)
         if not match:
-            die("Can not identify structure of CREATE TABLE")
+            die("Can not identify structure of CREATE TABLE:\n%s" % create_stmt)
         table_name = match.group(1)
         full_structure = match.group(2)
         table_settings = re.sub(r' AUTO_INCREMENT=\d+', '', match.group(3))
